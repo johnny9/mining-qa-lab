@@ -432,11 +432,21 @@ miner-orchestrator --config orchestrator.yaml validate
 miner-orchestrator --config orchestrator.yaml serve
 ```
 
-The service binds `127.0.0.1:8765` by default. Its local dashboard is `/`, its
-OpenAPI document is `/openapi.json`, and interactive API documentation is at
-`/docs`. State-changing calls require the bearer token stored at
+The service binds `127.0.0.1:8765` by default. Its local control plane has an
+overview at `/`, structured gate forms at `/gates`, lab and device forms at
+`/lab`, one-SHA untrusted pull-request approval at `/trigger`, and an advanced
+YAML editor at `/config`. Its OpenAPI document is `/openapi.json`, and
+interactive API documentation is at `/docs`. With the default
+`controller.auth_mode: bearer`, state-changing calls
+require the bearer token stored at
 `.miner-orchestrator/api-token`, unless `MINER_ORCHESTRATOR_API_TOKEN` or the
 configured token environment variable is set. The token is never printed.
+
+A lab that trusts its LAN can bind `0.0.0.0`, set `auth_mode: none`, and list
+the exact loopback and LAN CIDRs in `controller.allowed_networks`. No-auth mode
+is rejected unless at least one allowed network is configured, and requests
+whose direct socket address is outside those networks receive HTTP 403. Keep
+bearer mode for any host reachable outside a trusted network.
 
 YAML remains the source of truth. API updates require the current `ETag` in an
 `If-Match` header, validate the complete configuration, retain a timestamped
@@ -445,9 +455,12 @@ replace the in-memory snapshot until `/api/v1/config/reload` succeeds.
 
 The configuration separates public gate selectors from private lab coordinates:
 
-- `repositories`: GitHub owner/name, main/master branches, and exact trusted PR
-  contributor logins. An optional GitHub Actions artifact map pins workflow,
-  artifact name, archive member, download bounds, and token environment.
+- `repositories`: GitHub owner/name, main/master branches, exact trusted PR
+  contributor logins, and an `event_source` of `github` or `qa_status`. QA
+  Status feed consumers keep independent SQLite cursors, so redundant lab
+  orchestrators can observe the same authenticated webhook delivery without a
+  shared claim. An optional GitHub Actions artifact map pins workflow, artifact
+  name, archive member, download bounds, and token environment.
 - `test_modules`: unittest patterns, compatible device types, interface needs,
   and timeouts.
 - `gates`: triggers, changed-path filters, module lists, setup matrices, and
@@ -463,6 +476,9 @@ The configuration separates public gate selectors from private lab coordinates:
 The REST API provides CRUD endpoints for each configuration resource, full YAML
 validation/replacement, host and device probes, USB discovery, device photos,
 setup preflight, manual gate runs, and read-only event/run/assignment history.
+An operator can list open PRs and approve one exact, freshly revalidated head
+SHA for one gate without adding its contributor to the trusted list. The
+resulting gate retains pull-request, contributor, branch, and commit metadata.
 Use `configs/orchestrator.example.yaml` as the complete schema example.
 
 On first observation, a branch or pull request is recorded as a baseline rather

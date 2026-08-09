@@ -3,12 +3,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
-import html
 import json
 import os
 import secrets
 import subprocess
 from contextlib import asynccontextmanager
+from ipaddress import ip_address, ip_network
 from pathlib import Path
 from typing import Any, Callable, Mapping
 from urllib.request import Request as UrlRequest, urlopen
@@ -21,6 +21,7 @@ from ..errors import ConfigError
 from .config import ConfigSnapshot, ConfigStore
 from .database import OrchestratorDatabase
 from .engine import OrchestratorEngine
+from .ui import render_page
 
 
 def _state_dir(store: ConfigStore) -> Path:
@@ -68,7 +69,11 @@ def create_app(
     engine: OrchestratorEngine | None = None,
 ) -> FastAPI:
     engine = engine or OrchestratorEngine(store, database)
-    token = api_token(store)
+    token = (
+        api_token(store)
+        if store.snapshot.document["controller"].get("auth_mode", "bearer") == "bearer"
+        else None
+    )
     stop = asyncio.Event()
 
     async def loop() -> None:
@@ -106,11 +111,33 @@ def create_app(
         lifespan=lifespan,
     )
 
+    @app.middleware("http")
+    async def restrict_network(request: Request, call_next: Callable[..., Any]) -> Response:
+        networks = store.snapshot.document["controller"].get("allowed_networks", [])
+        if networks:
+            client_host = request.client.host if request.client else ""
+            try:
+                client_address = ip_address(client_host)
+            except ValueError:
+                return JSONResponse(
+                    status_code=403, content={"detail": "client network is not allowed"}
+                )
+            if not any(
+                client_address in ip_network(network, strict=False) for network in networks
+            ):
+                return JSONResponse(
+                    status_code=403, content={"detail": "client network is not allowed"}
+                )
+        return await call_next(request)
+
     async def authorize(authorization: str | None = Header(default=None)) -> None:
+        if store.snapshot.document["controller"].get("auth_mode", "bearer") == "none":
+            return
         supplied = ""
         if authorization and authorization.startswith("Bearer "):
             supplied = authorization[7:]
-        if not supplied or not hmac.compare_digest(supplied, token):
+        expected_token = token or api_token(store)
+        if not supplied or not hmac.compare_digest(supplied, expected_token):
             raise HTTPException(status_code=401, detail="valid local bearer token required")
 
     def expected(if_match: str | None) -> str | None:
@@ -337,6 +364,46 @@ def create_app(
         except (ConfigError, KeyError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    @app.get("/api/v1/repositories/{repository_id}/pull-requests")
+    async def repository_pull_requests(repository_id: str) -> list[dict[str, Any]]:
+        try:
+            return await asyncio.to_thread(engine.pull_requests, repository_id)
+        except ConfigError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post(
+        "/api/v1/repositories/{repository_id}/pull-requests/{number}/run",
+        dependencies=[Depends(authorize)],
+    )
+    async def approve_pull_request(
+        repository_id: str,
+        number: int,
+        request: Request,
+    ) -> dict[str, Any]:
+        body = await request.json()
+        gate_id = body.get("gate_id") if isinstance(body, dict) else None
+        expected_sha = body.get("expected_sha") if isinstance(body, dict) else None
+        if not isinstance(gate_id, str) or not isinstance(expected_sha, str):
+            raise HTTPException(
+                status_code=422,
+                detail="body requires gate_id and expected_sha",
+            )
+        gate = store.snapshot.document["gates"].get(gate_id)
+        if not isinstance(gate, dict) or gate.get("repository") != repository_id:
+            raise HTTPException(
+                status_code=422,
+                detail="gate does not belong to the selected repository",
+            )
+        try:
+            return await asyncio.to_thread(
+                engine.approve_pull_request,
+                gate_id,
+                number,
+                expected_sha,
+            )
+        except ConfigError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     @app.get("/api/v1/events")
     async def events(limit: int = 100) -> dict[str, Any]:
         return {"events": database.list_events(limit=min(max(limit, 1), 500))}
@@ -514,33 +581,31 @@ def create_app(
             "devices": checks,
         }
 
+    def ui(page: str) -> str:
+        return render_page(
+            page,
+            store.snapshot,
+            runs=database.list_gate_runs(limit=20),
+        )
+
     @app.get("/", response_class=HTMLResponse)
-    async def dashboard() -> str:
-        snapshot = store.snapshot
-        runs = database.list_gate_runs(limit=20)
-        rows = "".join(
-            f"<tr><td>{item['gate_id']}</td><td>{item['trigger_type']}</td>"
-            f"<td><code>{item['commit_sha'][:12]}</code></td>"
-            f"<td class='status {item['status']}'>{item['status']}</td></tr>"
-            for item in runs
-        ) or "<tr><td colspan='4'>No gate runs yet.</td></tr>"
-        yaml_text = html.escape(yaml.safe_dump(snapshot.document, sort_keys=False))
-        return f"""<!doctype html>
-<html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width'>
-<title>Miner Test Orchestrator</title><style>
-body{{font:15px system-ui;background:#0b0e0d;color:#eef1e8;margin:0}}main{{max-width:1100px;margin:auto;padding:36px}}
-h1,h2{{margin:.2em 0}}p{{color:#aab1a5}}table{{width:100%;border-collapse:collapse;margin:24px 0}}
-th,td{{text-align:left;border-bottom:1px solid #29302c;padding:12px}}code,textarea{{font-family:monospace}}
-.panel{{background:#111514;border:1px solid #29302c;padding:22px;margin:22px 0}}textarea{{width:100%;min-height:420px;background:#080a09;color:#eef1e8;border:1px solid #3a433d;padding:14px}}
-button{{background:#b9f34a;border:0;padding:11px 18px;font-weight:700;cursor:pointer}}.passed{{color:#b9f34a}}.failed,.error{{color:#ff6b63}}.running{{color:#68e0d1}}
-#message{{margin-left:12px}}</style></head><body><main>
-<p>LOCAL CONTROL PLANE</p><h1>Miner Test Orchestrator</h1><p>Configuration <code>{snapshot.revision[:12]}</code> · API <a href='/docs'>documentation</a></p>
-<section class='panel'><h2>Recent gate runs</h2><table><thead><tr><th>Gate</th><th>Trigger</th><th>Commit</th><th>Status</th></tr></thead><tbody>{rows}</tbody></table></section>
-<section class='panel'><h2>Configuration YAML</h2><p>Paste the local API token when saving. Changes are validated and written atomically.</p>
-<textarea id='yaml'>{yaml_text}</textarea><p><button onclick='saveConfig()'>Validate and save</button><span id='message'></span></p></section>
-<script>
-async function saveConfig(){{const token=prompt('Local API bearer token');if(!token)return;const message=document.getElementById('message');
-try{{const response=await fetch('/api/v1/config/yaml',{{method:'PUT',headers:{{'Content-Type':'application/yaml','Authorization':'Bearer '+token,'If-Match':'{snapshot.etag}'}},body:document.getElementById('yaml').value}});const body=await response.json();if(!response.ok)throw new Error(body.detail||response.statusText);message.textContent='Saved '+body.revision.slice(0,12);setTimeout(()=>location.reload(),600)}}catch(error){{message.textContent=error.message}}}}
-</script></main></body></html>"""
+    async def overview_page() -> str:
+        return ui("overview")
+
+    @app.get("/gates", response_class=HTMLResponse)
+    async def gates_page() -> str:
+        return ui("gates")
+
+    @app.get("/lab", response_class=HTMLResponse)
+    async def lab_page() -> str:
+        return ui("lab")
+
+    @app.get("/trigger", response_class=HTMLResponse)
+    async def trigger_page() -> str:
+        return ui("trigger")
+
+    @app.get("/config", response_class=HTMLResponse)
+    async def advanced_page() -> str:
+        return ui("advanced")
 
     return app

@@ -52,8 +52,10 @@ class Planner:
                     continue
                 if trigger == "pull_request" and not gate["triggers"].get("pull_requests", True):
                     continue
-                if trigger in {"push", "pull_request"} and not paths_match(
-                    event["changed_paths"], gate.get("changes")
+                if (
+                    trigger in {"push", "pull_request"}
+                    and not event["payload"].get("approved")
+                    and not paths_match(event["changed_paths"], gate.get("changes"))
                 ):
                     continue
                 lab = config["lab"]
@@ -309,7 +311,11 @@ class OrchestratorEngine:
         config = self.config_store.snapshot.document
         created = 0
         for repository_id, repository in config["repositories"].items():
-            created += self.collector.poll_repository(repository_id, repository)
+            created += self.collector.poll_repository(
+                repository_id,
+                repository,
+                config["qa_status"],
+            )
         created += self.collector.collect_schedules(config)
         created += self.planner.plan(config)
         return created
@@ -397,3 +403,70 @@ class OrchestratorEngine:
         self.planner.plan(config)
         runs = self.database.list_gate_runs(gate_id=gate_id)
         return next(item for item in runs if item["event_id"] == event["id"])
+
+    def pull_requests(self, repository_id: str) -> list[dict[str, Any]]:
+        config = self.config_store.snapshot.document
+        repository = config["repositories"].get(repository_id)
+        if not isinstance(repository, dict):
+            raise ConfigError(f"unknown repository: {repository_id}")
+        trusted = {
+            str(item).casefold()
+            for item in repository["pull_requests"]["trusted_contributors"]
+        }
+        bases = set(repository["pull_requests"]["base_branches"])
+        result = []
+        for pull in self.collector.github.open_pull_requests(repository["repository"]):
+            user = pull.get("user") or {}
+            head = pull.get("head") or {}
+            base = pull.get("base") or {}
+            number = pull.get("number")
+            sha = str(head.get("sha") or "").lower()
+            base_ref = str(base.get("ref") or "")
+            if not isinstance(number, int) or not sha or base_ref not in bases:
+                continue
+            contributor = str(user.get("login") or "")
+            result.append(
+                {
+                    "number": number,
+                    "title": str(pull.get("title") or f"Pull request #{number}"),
+                    "url": str(pull.get("html_url") or ""),
+                    "draft": bool(pull.get("draft")),
+                    "contributor": contributor,
+                    "trusted": contributor.casefold() in trusted,
+                    "head_sha": sha,
+                    "head_branch": str(head.get("ref") or ""),
+                    "base_branch": base_ref,
+                    "updated_at": pull.get("updated_at"),
+                }
+            )
+        return result
+
+    def approve_pull_request(
+        self,
+        gate_id: str,
+        number: int,
+        expected_sha: str,
+    ) -> dict[str, Any]:
+        config = self.config_store.snapshot.document
+        gate = config["gates"].get(gate_id)
+        if not isinstance(gate, dict):
+            raise ConfigError(f"unknown gate: {gate_id}")
+        if not gate["triggers"].get("pull_requests", True):
+            raise ConfigError(f"gate {gate_id!r} does not accept pull-request triggers")
+        if len(expected_sha) != 40 or any(
+            character not in "0123456789abcdefABCDEF" for character in expected_sha
+        ):
+            raise ConfigError("expected_sha must be a full 40-character hexadecimal SHA")
+        event = self.collector.approve_pull_request(
+            gate["repository"],
+            config["repositories"][gate["repository"]],
+            gate_id=gate_id,
+            number=number,
+            expected_sha=expected_sha,
+        )
+        self.planner.plan(config)
+        runs = self.database.list_gate_runs(gate_id=gate_id, limit=500)
+        try:
+            return next(item for item in runs if item["event_id"] == event["id"])
+        except StopIteration as exc:
+            raise ConfigError("approved pull request did not produce a gate run") from exc

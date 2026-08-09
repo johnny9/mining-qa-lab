@@ -10,6 +10,7 @@ import tempfile
 import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from ipaddress import ip_network
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -122,10 +123,28 @@ def validate_config(document: Mapping[str, Any]) -> dict[str, Any]:
     controller.setdefault("port", 8765)
     controller.setdefault("state_dir", ".miner-orchestrator")
     controller.setdefault("poll_seconds", 30)
+    controller.setdefault("auth_mode", "bearer")
+    controller.setdefault("allowed_networks", [])
     if not isinstance(controller["port"], int) or not 1 <= controller["port"] <= 65535:
         raise ConfigError("controller.port must be between 1 and 65535")
     if not isinstance(controller["poll_seconds"], (int, float)) or controller["poll_seconds"] <= 0:
         raise ConfigError("controller.poll_seconds must be positive")
+    if controller["auth_mode"] not in {"bearer", "none"}:
+        raise ConfigError("controller.auth_mode must be bearer or none")
+    controller["allowed_networks"] = _string_list(
+        controller["allowed_networks"], "controller.allowed_networks"
+    )
+    for index, network in enumerate(controller["allowed_networks"]):
+        try:
+            ip_network(network, strict=False)
+        except ValueError as exc:
+            raise ConfigError(
+                f"controller.allowed_networks[{index}] must be an IPv4 or IPv6 network"
+            ) from exc
+    if controller["auth_mode"] == "none" and not controller["allowed_networks"]:
+        raise ConfigError(
+            "controller.allowed_networks must not be empty when auth_mode is none"
+        )
 
     qa = _mapping(raw.setdefault("qa_status", {}), "qa_status")
     qa.setdefault("enabled", False)
@@ -142,6 +161,15 @@ def validate_config(document: Mapping[str, Any]) -> dict[str, Any]:
         github = _string(repository.get("repository"), f"repositories.{repository_id}.repository")
         if not _REPOSITORY.fullmatch(github):
             raise ConfigError(f"repositories.{repository_id}.repository must be owner/name")
+        event_source = repository.setdefault("event_source", "github")
+        if event_source not in {"github", "qa_status"}:
+            raise ConfigError(
+                f"repositories.{repository_id}.event_source must be github or qa_status"
+            )
+        if event_source == "qa_status" and not qa["enabled"]:
+            raise ConfigError(
+                f"repositories.{repository_id}.event_source requires qa_status.enabled"
+            )
         pushes = _mapping(repository.setdefault("pushes", {}), f"repositories.{repository_id}.pushes")
         pushes.setdefault("branches", ["main", "master"])
         _string_list(pushes["branches"], f"repositories.{repository_id}.pushes.branches", required=True)

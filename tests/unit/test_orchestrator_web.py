@@ -9,6 +9,7 @@ import yaml
 
 from miner_testcode.orchestrator.config import ConfigStore
 from miner_testcode.orchestrator.database import OrchestratorDatabase
+from miner_testcode.orchestrator.engine import OrchestratorEngine
 from test_orchestrator import configuration
 
 try:
@@ -34,10 +35,11 @@ class OrchestratorApiTest(unittest.IsolatedAsyncioTestCase):
         self.store = ConfigStore(self.path)
         self.database = OrchestratorDatabase(self.root / "state.sqlite3")
         self.addCleanup(self.database.close)
+        self.engine = OrchestratorEngine(self.store, self.database)
         with mock.patch.dict(
             "os.environ", {"MINER_ORCHESTRATOR_API_TOKEN": "local-token"}
         ):
-            app = create_app(self.store, self.database)
+            app = create_app(self.store, self.database, self.engine)
             self.client = AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://orchestrator.test"
             )
@@ -109,6 +111,123 @@ class OrchestratorApiTest(unittest.IsolatedAsyncioTestCase):
             "photo"
         ]
         self.assertTrue((self.path.parent / configured_photo).exists())
+
+    async def test_exposes_separate_gate_lab_trigger_and_advanced_pages(self) -> None:
+        pages = {
+            "/": "Lab overview",
+            "/gates": "Gate setup",
+            "/lab": "Lab and devices",
+            "/trigger": "Run an untrusted PR",
+            "/config": "Advanced configuration",
+        }
+        for path, title in pages.items():
+            with self.subTest(path=path):
+                response = await self.client.get(path)
+                self.assertEqual(response.status_code, 200)
+                self.assertIn(title, response.text)
+                self.assertIn('href="/gates"', response.text)
+                self.assertIn('href="/lab"', response.text)
+                self.assertIn('href="/trigger"', response.text)
+        gates = await self.client.get("/gates")
+        lab = await self.client.get("/lab")
+        trigger = await self.client.get("/trigger")
+        self.assertIn('data-kind="gate"', gates.text)
+        self.assertIn('data-kind="device"', lab.text)
+        self.assertIn('data-action="approve-pr"', trigger.text)
+
+    async def test_lists_and_approves_an_exact_untrusted_pull_request_head(self) -> None:
+        pull = {
+            "number": 73,
+            "title": "Exercise candidate firmware",
+            "html_url": "https://github.example/owner/firmware/pull/73",
+            "state": "open",
+            "draft": False,
+            "updated_at": "2026-08-08T12:00:00Z",
+            "user": {"login": "mallory"},
+            "head": {"sha": "b" * 40, "ref": "candidate"},
+            "base": {"sha": "a" * 40, "ref": "main"},
+        }
+
+        class Github:
+            def open_pull_requests(self, repository):
+                return [pull]
+
+            def pull_request(self, repository, number):
+                self.repository = repository
+                self.number = number
+                return pull
+
+            def changed_paths(self, repository, base, head):
+                return ["doc/explicit-approval-bypasses-path-filter.md"]
+
+        github = Github()
+        self.engine.collector.github = github  # type: ignore[assignment]
+        listed = await self.client.get(
+            "/api/v1/repositories/firmware/pull-requests"
+        )
+        approved = await self.client.post(
+            "/api/v1/repositories/firmware/pull-requests/73/run",
+            headers=self.auth,
+            json={"gate_id": "firmware-smoke", "expected_sha": "b" * 40},
+        )
+        stale = await self.client.post(
+            "/api/v1/repositories/firmware/pull-requests/73/run",
+            headers=self.auth,
+            json={"gate_id": "firmware-smoke", "expected_sha": "c" * 40},
+        )
+
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(listed.json()[0]["contributor"], "mallory")
+        self.assertFalse(listed.json()[0]["trusted"])
+        self.assertEqual(approved.status_code, 200)
+        self.assertEqual(approved.json()["pr_number"], 73)
+        self.assertEqual(approved.json()["trigger_type"], "pull_request")
+        self.assertEqual(stale.status_code, 422)
+        self.assertIn("head changed", stale.json()["detail"])
+        event = self.database.list_events()[0]
+        self.assertTrue(event["payload"]["approved"])
+        self.assertEqual(event["payload"]["gate_id"], "firmware-smoke")
+        self.assertEqual(github.repository, "owner/firmware")
+        self.assertEqual(github.number, 73)
+
+    async def test_no_auth_mode_allows_only_configured_client_networks(self) -> None:
+        path = self.root / "open-orchestrator.yaml"
+        document = configuration(self.root)
+        document["controller"]["auth_mode"] = "none"
+        document["controller"]["allowed_networks"] = [
+            "127.0.0.0/8",
+            "192.168.1.0/24",
+        ]
+        path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+        store = ConfigStore(path)
+        database = OrchestratorDatabase(self.root / "open-state.sqlite3")
+        self.addCleanup(database.close)
+        app = create_app(store, database)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app, client=("192.168.1.25", 12345)),
+            base_url="http://orchestrator.test",
+        ) as allowed:
+            current = await allowed.get("/api/v1/config")
+            repository = store.snapshot.document["repositories"]["firmware"] | {
+                "polling_seconds": 120
+            }
+            changed = await allowed.patch(
+                "/api/v1/repositories/firmware",
+                headers={"If-Match": current.headers["etag"]},
+                json=repository,
+            )
+            dashboard = await allowed.get("/")
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app, client=("203.0.113.25", 12345)),
+            base_url="http://orchestrator.test",
+        ) as denied:
+            blocked = await denied.get("/api/v1/health")
+
+        self.assertEqual(changed.status_code, 200)
+        self.assertNotIn("Paste the local API token", dashboard.text)
+        self.assertEqual(blocked.status_code, 403)
 
 
 if __name__ == "__main__":

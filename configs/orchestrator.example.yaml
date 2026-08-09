@@ -5,6 +5,8 @@ controller:
   port: 8765
   state_dir: .miner-orchestrator
   poll_seconds: 60
+  auth_mode: bearer
+  allowed_networks: []
   api_token_env: MINER_ORCHESTRATOR_API_TOKEN
   environment_allowlist:
     - MINING_QA_TOKEN
@@ -19,6 +21,7 @@ qa_status:
 repositories:
   esp-miner:
     repository: bitaxeorg/ESP-Miner
+    event_source: github
     clone_url: https://github.com/bitaxeorg/ESP-Miner.git
     pushes:
       branches: [main, master]

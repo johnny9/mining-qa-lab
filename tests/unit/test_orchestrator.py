@@ -107,6 +107,39 @@ class ConfigStoreTest(unittest.TestCase):
             with self.assertRaisesRegex(ConfigError, "unknown setup"):
                 validate_config(document)
 
+    def test_no_auth_requires_valid_allowed_networks(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            document = configuration(Path(directory))
+            document["controller"]["auth_mode"] = "none"
+            with self.assertRaisesRegex(ConfigError, "allowed_networks must not be empty"):
+                validate_config(document)
+
+            document["controller"]["allowed_networks"] = ["not-a-network"]
+            with self.assertRaisesRegex(ConfigError, "IPv4 or IPv6 network"):
+                validate_config(document)
+
+            document["controller"]["allowed_networks"] = [
+                "127.0.0.0/8",
+                "192.168.1.0/24",
+            ]
+            normalized = validate_config(document)
+            self.assertEqual(normalized["controller"]["auth_mode"], "none")
+
+    def test_qa_status_event_source_requires_enabled_qa_status(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            document = configuration(Path(directory))
+            document["repositories"]["firmware"]["event_source"] = "qa_status"
+            with self.assertRaisesRegex(ConfigError, "requires qa_status.enabled"):
+                validate_config(document)
+
+            document["qa_status"]["enabled"] = True
+            document["qa_status"]["base_url"] = "https://qa.example"
+            normalized = validate_config(document)
+            self.assertEqual(
+                normalized["repositories"]["firmware"]["event_source"],
+                "qa_status",
+            )
+
     def test_validates_artifact_deployment_and_module_profile_override(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             document = configuration(Path(directory))
@@ -198,6 +231,129 @@ class SchedulingTest(unittest.TestCase):
         self.assertEqual(event["trigger_type"], "push")
         self.assertEqual(event["pr_number"], 42)
         self.assertEqual(event["contributor"], "alice")
+
+    def test_qa_status_feed_uses_independent_local_cursors(self) -> None:
+        class Feed:
+            def __init__(self) -> None:
+                self.baselines = 0
+                self.polls = 0
+
+            def deliveries(self, config, repository, *, after, latest):
+                if latest:
+                    self.baselines += 1
+                    return {"deliveries": [], "next_cursor": "baseline-id"}
+                self.assert_after(after)
+                self.polls += 1
+                return {
+                    "deliveries": [
+                        {
+                            "id": "delivery-cursor-id",
+                            "delivery_id": "github-delivery-id",
+                            "event_type": "push",
+                            "repository": "owner/firmware",
+                            "ref": "refs/heads/main",
+                            "commit_sha": "c" * 40,
+                            "sender_login": "alice",
+                            "changed_paths": ["src/main.c"],
+                        }
+                    ],
+                    "next_cursor": "delivery-cursor-id",
+                }
+
+            @staticmethod
+            def assert_after(after):
+                if after != "baseline-id":
+                    raise AssertionError(after)
+
+        with tempfile.TemporaryDirectory() as directory:
+            feed = Feed()
+            repository = {
+                "repository": "owner/firmware",
+                "event_source": "qa_status",
+                "pushes": {"branches": ["main"]},
+                "pull_requests": {
+                    "base_branches": ["main"],
+                    "trusted_contributors": ["alice"],
+                },
+            }
+            qa_status = {
+                "enabled": True,
+                "base_url": "https://qa.example",
+                "token_env": "TEST_QA_TOKEN",
+            }
+
+            events = []
+            cursors = []
+            for name in ("primary", "redundant"):
+                database = OrchestratorDatabase(Path(directory) / f"{name}.sqlite3")
+                collector = EventCollector(database, qa_status=feed)  # type: ignore[arg-type]
+                self.assertEqual(
+                    collector.poll_repository("firmware", repository, qa_status), 0
+                )
+                self.assertEqual(
+                    collector.poll_repository("firmware", repository, qa_status), 1
+                )
+                events.append(database.list_events()[0])
+                cursors.append(
+                    database.cursor("qa-status:https://qa.example:owner/firmware")
+                )
+                database.close()
+
+        self.assertEqual(feed.baselines, 2)
+        self.assertEqual(feed.polls, 2)
+        self.assertEqual([event["trigger_type"] for event in events], ["push", "push"])
+        self.assertEqual([event["commit_sha"] for event in events], ["c" * 40] * 2)
+        self.assertEqual(
+            [cursor["value"] for cursor in cursors],
+            ["delivery-cursor-id", "delivery-cursor-id"],
+        )
+
+    def test_qa_status_feed_filters_untrusted_pull_request_authors(self) -> None:
+        class Feed:
+            def deliveries(self, config, repository, *, after, latest):
+                return {
+                    "deliveries": [
+                        {
+                            "id": "delivery-cursor-id",
+                            "delivery_id": "github-delivery-id",
+                            "event_type": "pull_request",
+                            "action": "synchronize",
+                            "repository": "owner/firmware",
+                            "commit_sha": "d" * 40,
+                            "pr_number": 9,
+                            "pr_head_ref": "feature",
+                            "pr_base_ref": "main",
+                            "pr_author_login": "mallory",
+                            "changed_paths": [],
+                        }
+                    ],
+                    "next_cursor": "delivery-cursor-id",
+                }
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = OrchestratorDatabase(Path(directory) / "state.sqlite3")
+            database.set_cursor(
+                "qa-status:https://qa.example:owner/firmware", "0"
+            )
+            collector = EventCollector(database, qa_status=Feed())  # type: ignore[arg-type]
+            created = collector.poll_repository(
+                "firmware",
+                {
+                    "repository": "owner/firmware",
+                    "event_source": "qa_status",
+                    "pushes": {"branches": ["main"]},
+                    "pull_requests": {
+                        "base_branches": ["main"],
+                        "trusted_contributors": ["alice"],
+                    },
+                },
+                {"enabled": True, "base_url": "https://qa.example"},
+            )
+            events = database.list_events()
+            database.close()
+
+        self.assertEqual(created, 0)
+        self.assertEqual(events, [])
 
     def test_plans_one_assignment_per_setup_and_module_idempotently(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

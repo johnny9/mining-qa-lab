@@ -87,12 +87,18 @@ def main(argv: list[str] | None = None) -> int:
             from .web import api_token, create_app
 
             controller = store.snapshot.document["controller"]
-            token_path = Path(controller["state_dir"])
-            if not token_path.is_absolute():
-                token_path = (store.source.parent / token_path).resolve()
-            token_path /= "api-token"
-            api_token(store)
-            logging.getLogger(__name__).info("local API token: %s", token_path)
+            if controller.get("auth_mode", "bearer") == "bearer":
+                token_path = Path(controller["state_dir"])
+                if not token_path.is_absolute():
+                    token_path = (store.source.parent / token_path).resolve()
+                token_path /= "api-token"
+                api_token(store)
+                logging.getLogger(__name__).info("local API token: %s", token_path)
+            else:
+                logging.getLogger(__name__).warning(
+                    "API authentication disabled; allowed client networks: %s",
+                    ", ".join(controller["allowed_networks"]),
+                )
             uvicorn.run(
                 create_app(store, database, engine),
                 host=str(controller["bind"]),
