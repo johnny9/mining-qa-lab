@@ -69,7 +69,9 @@ Installable project skills live under `skills/` and are governed by
 
 ## Source-of-truth order
 
-- `README.md`: installation, commands, operator orientation, and relationships.
+- `README.md`: short project introduction, relationships, and quick start.
+- `docs/*.md`: plain-language user manuals for operators. Keep internal
+  behavior, safety contracts, and agent instructions in specs or this file.
 - `contracts/orchestration-v1.md`: versioned lab/testcode process boundary.
 - `specs/OVERVIEW.md`: purpose, ownership, actors, and system context.
 - `specs/INDEX.md`: complete feature directory.

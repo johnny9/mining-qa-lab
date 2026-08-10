@@ -279,17 +279,3 @@ operation and needs its own explicit authorization.
   loop; inspect bounded journal and durable run/assignment state.
 - **Service was killed during a test:** startup correctly marks interrupted work
   as error. Inspect the physical device and cleanup state before retrying.
-
-## Install the agent skill
-
-The repository includes the same safety workflow as an installable skill:
-
-```bash
-./scripts/validate-codex-skills
-./scripts/manage-codex-skills status manage-lab-orchestrator-deployment
-./scripts/manage-codex-skills install manage-lab-orchestrator-deployment
-```
-
-Installation creates a link under `${CODEX_HOME:-$HOME/.codex}/skills`. It never
-replaces an existing file, directory, or different link. Because the link points
-to this repository, reviewed skill updates become visible without copying files.
