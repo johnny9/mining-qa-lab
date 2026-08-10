@@ -47,6 +47,18 @@ AxeOS artifacts; it has no separate bridge firmware lifecycle.
   that aggregate into the informational Check Run and PR summary; the hardware
   host does not receive those credentials.
 
+## Developer contracts
+
+Start with [AGENTS.md](AGENTS.md) for working rules and verification commands.
+The durable system and feature contracts live in [specs/](specs/README.md):
+[OVERVIEW.md](specs/OVERVIEW.md) defines the runner/orchestrator boundary,
+[INDEX.md](specs/INDEX.md) lists every supported feature slice, and
+[STORY-MAP.md](specs/STORY-MAP.md) navigates them by operator outcome.
+
+Temporary implementation plans belong in [plans/](plans/README.md). Feature
+behavior, constraints, acceptance criteria, and current evidence belong in the
+specification tree and must be reconciled in the same change.
+
 ## Architecture
 
 ```text
