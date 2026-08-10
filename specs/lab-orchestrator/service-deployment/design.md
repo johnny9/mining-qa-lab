@@ -8,7 +8,7 @@
 | Deployment skill | Guide agents through evidence-backed, authorized operations | `skills/manage-lab-orchestrator-deployment/SKILL.md` |
 | Inspector | Read systemd, config validation, and API health without mutation | `skills/manage-lab-orchestrator-deployment/scripts/inspect_deployment.py` |
 | Unit example | Define the portable systemd user-service baseline | `skills/manage-lab-orchestrator-deployment/assets/miner-orchestrator.service` |
-| Orchestrator | Validate config, serve API, recover state, and run work | `src/miner_testcode/orchestrator/cli.py`, `src/miner_testcode/orchestrator/web.py` |
+| Orchestrator | Validate config, serve API, recover state, and run work | `src/mining_qa_lab/cli.py`, `src/mining_qa_lab/web.py` |
 
 ## Interfaces and contracts
 

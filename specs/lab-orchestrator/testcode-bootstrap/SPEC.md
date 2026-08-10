@@ -14,6 +14,8 @@ assignment.
 
 ## Changelog
 
+- 2026-08-10: Made `mining-qa-testcode` an external repository dependency and
+  linked its exact source identity through orchestration contract v1.
 - 2026-08-10: Linked the managed worker checkout/venv boundary to the separate
   orchestrator service-deployment lifecycle.
 - 2026-08-10: Reconciled supported implementation and automated acceptance;

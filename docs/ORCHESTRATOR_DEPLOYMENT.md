@@ -32,14 +32,14 @@ the orchestrator itself requires the release change described here.
 This example runs as your normal Linux user:
 
 ```text
-~/.local/src/miner-testcode/                 source checkout
-~/.local/opt/miner-testcode/releases/SHA/   releases
-~/.local/opt/miner-testcode/current          active-release link
-~/.config/miner-testcode/orchestrator.yaml   private configuration
-~/.config/miner-testcode/orchestrator.env    optional private secrets
-~/.local/state/miner-orchestrator/            database and orchestrator jobs
-~/.local/state/miner-testcode/                test artifacts
-~/.local/lib/miner-testcode/                  worker testcode checkout and venv
+~/.local/src/mining-qa-lab/                 source checkout
+~/.local/opt/mining-qa-lab/releases/SHA/   releases
+~/.local/opt/mining-qa-lab/current          active-release link
+~/.config/mining-qa-lab/orchestrator.yaml   private configuration
+~/.config/mining-qa-lab/orchestrator.env    optional private secrets
+~/.local/state/mining-qa-lab/            database and orchestrator jobs
+~/.local/state/mining-qa-testcode/                test artifacts
+~/.local/lib/mining-qa-testcode/                  worker testcode checkout and venv
 ```
 
 You can use other absolute paths. If you do, update the YAML and systemd unit
@@ -56,7 +56,7 @@ You need:
 - the exact repository revision you intend to deploy.
 
 Do not put tokens in the repository or command line. If the service needs
-environment tokens, create `~/.config/miner-testcode/orchestrator.env` with mode
+environment tokens, create `~/.config/mining-qa-lab/orchestrator.env` with mode
 0600 and put only named `KEY=value` entries there. Never print that file.
 
 ## Install the first release
@@ -64,13 +64,13 @@ environment tokens, create `~/.config/miner-testcode/orchestrator.env` with mode
 The following is an example. Read each path before running it.
 
 ```bash
-source_root="$HOME/.local/src/miner-testcode"
-deploy_root="$HOME/.local/opt/miner-testcode"
-config_root="$HOME/.config/miner-testcode"
-state_root="$HOME/.local/state/miner-orchestrator"
-artifact_root="$HOME/.local/state/miner-testcode"
-worker_root="$HOME/.local/lib/miner-testcode"
-approved_repository="https://github.com/johnny9/miner-testcode.git"
+source_root="$HOME/.local/src/mining-qa-lab"
+deploy_root="$HOME/.local/opt/mining-qa-lab"
+config_root="$HOME/.config/mining-qa-lab"
+state_root="$HOME/.local/state/mining-qa-lab"
+artifact_root="$HOME/.local/state/mining-qa-testcode"
+worker_root="$HOME/.local/lib/mining-qa-testcode"
+approved_repository="https://github.com/johnny9/mining-qa-lab.git"
 
 install -d -m 0700 \
   "$source_root" "$deploy_root/releases" "$config_root" "$state_root" \
@@ -91,7 +91,7 @@ git -C "$source_root" archive "$release_sha" | tar -x -C "$release"
 } > "$release/RELEASE_PROVENANCE"
 chmod 0444 "$release/RELEASE_PROVENANCE"
 python3 -m venv "$release/.venv"
-"$release/.venv/bin/python" -m pip install --no-input --editable "$release[orchestrator]"
+"$release/.venv/bin/python" -m pip install --no-input --editable "$release"
 ```
 
 Initialize and edit the private configuration:
@@ -196,7 +196,7 @@ git -C "$source_root" archive "$target_sha" | tar -x -C "$candidate"
 } > "$candidate/RELEASE_PROVENANCE"
 chmod 0444 "$candidate/RELEASE_PROVENANCE"
 python3 -m venv "$candidate/.venv"
-"$candidate/.venv/bin/python" -m pip install --no-input --editable "$candidate[orchestrator]"
+"$candidate/.venv/bin/python" -m pip install --no-input --editable "$candidate"
 ```
 
 Run the candidate checks before stopping the current service:

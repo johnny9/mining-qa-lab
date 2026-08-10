@@ -35,8 +35,10 @@ Companion files separate stakeholder intent, executable acceptance, durable
 design contracts, and risks so that each stays readable.
 
 Feature directories are domain slices, not mirrors of source directories. A
-slice may cross runner, adapter, interface, persistence, API, and test modules
-when those pieces jointly deliver one outcome.
+slice may cross persistence, API, service, worker-process, and test modules when
+those pieces jointly deliver one lab outcome. Detailed runner features remain
+in the separate `mining-qa-testcode` specification tree; this repository links
+them as external contracts instead of duplicating them.
 
 Additional focused references are allowed when they define a real contract or
 reduce noise. Link them from `SPEC.md` or `design.md` and say whether they are

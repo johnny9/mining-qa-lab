@@ -13,6 +13,9 @@ hardened systemd user service without losing configuration or durable state.
 
 ## Changelog
 
+- 2026-08-10: Moved repository and service-release examples to
+  `mining-qa-lab` while keeping managed runner paths under
+  `mining-qa-testcode`.
 - 2026-08-10: Reconciled the supported source workflow and automated evidence;
   live host update and rollback acceptance remains outstanding.
 - 2026-08-10: Defined exact-SHA release layout, systemd user-service contract,

@@ -9,8 +9,8 @@ import zipfile
 from pathlib import Path
 from unittest import mock
 
-from miner_testcode.errors import ConfigError
-from miner_testcode.orchestrator.firmware import (
+from mining_qa_lab.errors import ConfigError
+from mining_qa_lab.firmware import (
     FirmwareDeployer,
     FirmwareDeploymentError,
     GithubActionsArtifactFetcher,

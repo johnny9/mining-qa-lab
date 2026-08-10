@@ -4,10 +4,10 @@
 
 | Component | Responsibility | Implementation pointer |
 |---|---|---|
-| Planner | Match events to gates and expand assignments | `src/miner_testcode/orchestrator/engine.py` |
-| Path matcher | Apply include/exclude change policy | `src/miner_testcode/orchestrator/events.py` |
-| Database | Atomically create idempotent runs/assignments and supersede queued work | `src/miner_testcode/orchestrator/database.py` |
-| Config validator | Ensure referenced setup/module matrix is valid | `src/miner_testcode/orchestrator/config.py` |
+| Planner | Match events to gates and expand assignments | `src/mining_qa_lab/engine.py` |
+| Path matcher | Apply include/exclude change policy | `src/mining_qa_lab/events.py` |
+| Database | Atomically create idempotent runs/assignments and supersede queued work | `src/mining_qa_lab/database.py` |
+| Config validator | Ensure referenced setup/module matrix is valid | `src/mining_qa_lab/config.py` |
 
 ## Interfaces and contracts
 

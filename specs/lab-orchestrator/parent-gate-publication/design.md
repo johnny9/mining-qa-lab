@@ -4,10 +4,10 @@
 
 | Component | Responsibility | Implementation pointer |
 |---|---|---|
-| Gate publisher | Build/post parent payload and attach child result IDs | `src/miner_testcode/orchestrator/qa_status.py` |
-| Engine | Publish lifecycle updates and compute terminal aggregate status | `src/miner_testcode/orchestrator/engine.py` |
-| Database | Persist parent external ID/URL and assignment child links | `src/miner_testcode/orchestrator/database.py` |
-| Runner publisher | Independently publish each detailed child result | `src/miner_testcode/publishers.py:MiningQaStatusPublisher` |
+| Gate publisher | Build/post parent payload and attach child result IDs | `src/mining_qa_lab/qa_status.py` |
+| Engine | Publish lifecycle updates and compute terminal aggregate status | `src/mining_qa_lab/engine.py` |
+| Database | Persist parent external ID/URL and assignment child links | `src/mining_qa_lab/database.py` |
+| External runner publisher | Independently publish each detailed child result | [`mining-qa-testcode` publisher](https://github.com/johnny9/mining-qa-testcode/blob/main/src/miner_testcode/publishers.py) |
 
 ## Interfaces and contracts
 
@@ -93,8 +93,8 @@ Detailed evidence remains in children to keep parent compact.
 |---|---|
 | [Gate planning and supersession](../gate-planning-and-supersession/SPEC.md) | Supplies matrix, digest, trigger, and required policy. |
 | [Assignment execution](../assignment-execution/SPEC.md) | Supplies durable status and child ID/URL. |
-| [Result model and publishing](../../test-runner/result-model-and-publishing/SPEC.md) | Runner owns detailed child publication. |
-| [Artifacts, privacy, and provenance](../../test-runner/artifacts-privacy-and-provenance/SPEC.md) | Detailed evidence stays sanitized in child records. |
+| [Result model and publishing](https://github.com/johnny9/mining-qa-testcode/blob/main/specs/test-runner/result-model-and-publishing/SPEC.md) | Runner owns detailed child publication. |
+| [Artifacts, privacy, and provenance](https://github.com/johnny9/mining-qa-testcode/blob/main/specs/test-runner/artifacts-privacy-and-provenance/SPEC.md) | Detailed evidence stays sanitized in child records. |
 
 ## Verification approach
 

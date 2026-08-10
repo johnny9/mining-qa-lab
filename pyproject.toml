@@ -3,9 +3,9 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "miner-testcode"
+name = "mining-qa-lab"
 version = "0.1.0"
-description = "Asynchronous end-to-end test runner for Bitcoin mining devices"
+description = "Durable Mining QA lab orchestration service"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
@@ -19,19 +19,16 @@ classifiers = [
   "Topic :: Software Development :: Testing",
 ]
 dependencies = [
-  "websockets>=14,<16",
-]
-
-[project.optional-dependencies]
-orchestrator = [
   "fastapi>=0.115,<0.116",
   "PyYAML>=6,<7",
   "uvicorn>=0.34,<0.35",
 ]
 
 [project.scripts]
-miner-test = "miner_testcode.runner:main"
-miner-orchestrator = "miner_testcode.orchestrator.cli:main"
+miner-orchestrator = "mining_qa_lab.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+mining_qa_lab = ["orchestrator.example.yaml"]

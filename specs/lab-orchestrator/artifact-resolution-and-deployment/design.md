@@ -4,10 +4,10 @@
 
 | Component | Responsibility | Implementation pointer |
 |---|---|---|
-| Artifact fetcher | Resolve exact workflow/artifact and securely cache firmware | `src/miner_testcode/orchestrator/firmware.py` |
-| Firmware deployer | Check board/API, perform OTA/reboot verification, write marker | `src/miner_testcode/orchestrator/firmware.py` |
-| Executor | Invoke deployment once after leases and before runner | `src/miner_testcode/orchestrator/engine.py` |
-| Config validator | Validate workflow, member, digest, method, and target relationships | `src/miner_testcode/orchestrator/config.py` |
+| Artifact fetcher | Resolve exact workflow/artifact and securely cache firmware | `src/mining_qa_lab/firmware.py` |
+| Firmware deployer | Check board/API, perform OTA/reboot verification, write marker | `src/mining_qa_lab/firmware.py` |
+| Executor | Invoke deployment once after leases and before runner | `src/mining_qa_lab/engine.py` |
+| Config validator | Validate workflow, member, digest, method, and target relationships | `src/mining_qa_lab/config.py` |
 
 ## Interfaces and contracts
 
@@ -94,7 +94,7 @@ Deployment occurs once per gate/setup identity, not once per test module.
 | [Event ingestion and trust](../event-ingestion-and-trust/SPEC.md) | Supplies exact authorized commit. |
 | [Lab inventory and preflight](../lab-inventory-and-preflight/SPEC.md) | Supplies target/API and compatibility identity. |
 | [Assignment execution](../assignment-execution/SPEC.md) | Acquires leases and invokes deployment before runner. |
-| [Firmware lifecycle](../../test-runner/firmware-lifecycle/SPEC.md) | Runner may validate firmware; orchestrator owns gate-wide predeployment. |
+| [Firmware lifecycle](https://github.com/johnny9/mining-qa-testcode/blob/main/specs/test-runner/firmware-lifecycle/SPEC.md) | Runner may validate firmware; orchestrator owns gate-wide predeployment. |
 
 ## Verification approach
 

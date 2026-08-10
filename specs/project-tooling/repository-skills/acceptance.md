@@ -30,7 +30,7 @@
 
 ## Verification evidence
 
-- 2026-08-10: The full 102-test unit suite passed, including temporary
+- 2026-08-10: The standalone lab's 48-test unit suite passed, including temporary
   `CODEX_HOME` list/status/install/idempotence, unmanaged/foreign/broken-link
   refusal, and repository validation tests.
 - 2026-08-10: The repository validator, standard skill quick validator, Python

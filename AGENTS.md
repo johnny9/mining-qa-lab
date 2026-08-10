@@ -2,195 +2,155 @@
 
 ## Project mission
 
-`miner-testcode` contains two related products:
+`mining-qa-lab` is the lab-control and gate-orchestration repository in the
+Mining QA family. It owns trusted event intake, durable gate planning, lab
+inventory and leases, optional firmware deployment, installation and execution
+of external testcode, operator controls, and parent gate publication.
 
-- `miner-test` runs detailed, failure-safe tests against mining hardware and
-  publishes child results and evidence.
-- `miner-orchestrator` converts authorized repository events and operator
-  requests into durable lab gates, executes `miner-test`, and publishes only
-  parent gate aggregation and child-result links.
-
-Read [specs/OVERVIEW.md](specs/OVERVIEW.md) for the complete ownership boundary
-and [specs/INDEX.md](specs/INDEX.md) for feature-level contracts.
+The detailed runner and hardware tests live in
+[`mining-qa-testcode`](https://github.com/johnny9/mining-qa-testcode). Mining QA
+Status is an external collector and presentation service. Start with
+[specs/OVERVIEW.md](specs/OVERVIEW.md), then use
+[specs/INDEX.md](specs/INDEX.md) to locate the feature being changed.
 
 ## Working behavior
 
-- State material assumptions and resolve ambiguity before changing public
-  behavior, compatibility, safety, data, hardware state, or interfaces.
-- Prefer the smallest coherent change that satisfies the request.
-- Preserve unrelated work and follow the repository's established structure.
-- For defects, establish evidence of the problem before fixing it and add a
-  regression that fails before the fix when practical.
-- For refactors, establish relevant behavior before and after the change.
-- For multi-step work, maintain a short plan with an explicit verification
+- Inspect current code, tests, configuration contracts, and relevant specs
+  before proposing or changing behavior.
+- State material assumptions before changing a public interface, safety rule,
+  persistent state, compatibility promise, or hardware behavior.
+- Prefer the smallest coherent change and preserve unrelated work.
+- For a defect, establish evidence and add a regression that fails before the
+  fix when practical.
+- Keep a short plan for multi-step work and include an explicit verification
   step.
-- Do not claim a test, build, simulation, deployment, or hardware validation
-  that was not actually run.
+- Never claim a test, build, service check, simulation, deployment, or HIL run
+  that was not actually performed.
 
-## Documentation contract
+## Specification workflow
 
-For any non-trivial task:
+For non-trivial work:
 
-1. Find the relevant feature through `specs/INDEX.md`.
-2. Read its `SPEC.md` and all linked companion files before planning or
-   modifying implementation.
-3. Read directly related feature specs named in `design.md`.
-4. Treat specs as durable intent and code, tests, measurements, and live
-   checks as implementation evidence.
-5. Report contradictions rather than silently choosing one source.
-6. Update specs in the same change when observable behavior, an interface, a
-   constraint, an operating procedure, or a durable design decision changes.
+1. Find the feature in `specs/INDEX.md`.
+2. Read its `SPEC.md`, `intent.md`, `acceptance.md`, `design.md`, and `risks.md`.
+3. Read directly related slices named in `design.md`.
+4. Treat specs as durable intent and code/tests/live checks as implementation
+   evidence. Report contradictions instead of silently choosing one.
+5. Update the spec in the same change when behavior, API, payload, schema,
+   state, constraints, operating procedure, or durable design changes.
+6. Add new features to the index exactly once and update the overview or story
+   map when the project-level flow changes.
 
-Use the project-local `.agents/skills/specs/SKILL.md` workflow for new features,
-feature reconciliation, review preparation, and product or architecture
-reviews.
+Use [.agents/skills/specs/SKILL.md](.agents/skills/specs/SKILL.md) for new
+features, reconciliation, and product or architecture reviews. Temporary
+delivery notes belong in `plans/`, never as the only record of a durable
+decision.
 
 ## Repository skills
 
-Installable project skills live under `skills/` and remain the source of truth;
-do not maintain a separately edited copy under an agent home.
+Installable project skills live under `skills/` and are governed by
+[Repository skills](specs/project-tooling/repository-skills/SPEC.md).
 
-- Read [Repository skills](specs/project-tooling/repository-skills/SPEC.md) for
-  the packaging and installation contract.
-- For orchestrator service installation, inspection, update, restart, rollback,
-  or systemd troubleshooting, use
-  `skills/manage-lab-orchestrator-deployment/SKILL.md` and read
+- For service inspection, installation, update, restart, rollback, or systemd
+  diagnosis, read
+  `skills/manage-lab-orchestrator-deployment/SKILL.md` and
   [Service deployment](specs/lab-orchestrator/service-deployment/SPEC.md).
-- Validate changes with `./scripts/validate-codex-skills`.
-- Check destinations with `./scripts/manage-codex-skills status SKILL...`, then
-  install with `./scripts/manage-codex-skills install SKILL...`.
-- The installer creates repository-backed links and never replaces an existing
-  file, directory, or different link. Compare conflicts before asking whether
-  to migrate them.
-- A skill supplies procedure, not authority. Service mutation, config changes,
-  HIL, firmware deployment, and publication still require the relevant request.
-
-A documentation update is normally unnecessary for formatting, test-only
-cleanup, internal renames, or behavior-preserving refactors unless they alter a
-documented contract, supported environment, safety property, or verification
-procedure.
-
-When creating a feature spec, add it to `specs/INDEX.md` in the same change.
-Update `specs/OVERVIEW.md` or `specs/STORY-MAP.md` when the project-level
-capability or actor flow changes. Temporary delivery notes belong in `plans/`,
-not in the durable specification tree.
+- Validate skills with `./scripts/validate-codex-skills`.
+- Inspect installation with `./scripts/manage-codex-skills status all` and
+  install only when requested with `./scripts/manage-codex-skills install ...`.
+- A skill supplies procedure, not authority. It does not authorize service
+  mutation, private config changes, firmware deployment, HIL, or publication.
 
 ## Source-of-truth order
 
-- `README.md`: installation, common commands, and operator orientation.
-- `specs/OVERVIEW.md`: system purpose, ownership boundary, actors, and major
-  capabilities.
-- `specs/INDEX.md`: complete directory of feature specs.
-- `specs/<area>/<feature>/SPEC.md`: canonical feature entry, lifecycle, and
-  changelog.
-- Feature companion files: intent, acceptance, design, and risks.
-- `plans/`: temporary delivery material; never the only durable record of a
-  decision or supported behavior.
-- Code and tests: current implementation evidence that must be reconciled with
-  documented intent.
+- `README.md`: installation, commands, operator orientation, and relationships.
+- `contracts/orchestration-v1.md`: versioned lab/testcode process boundary.
+- `specs/OVERVIEW.md`: purpose, ownership, actors, and system context.
+- `specs/INDEX.md`: complete feature directory.
+- `specs/<area>/<feature>/SPEC.md` and companions: feature intent,
+  acceptance, design, risks, lifecycle, and changelog.
+- Generated `/openapi.json`: exact REST field shape.
+- Code and tests: current implementation evidence to reconcile with intent.
 
-If these sources conflict, stop and report the conflict. Resolve it in the same
-change when that resolution is within scope.
+Stop and report a conflict between these sources. Resolve it in the same change
+when the resolution is in scope.
 
-## Non-negotiable system boundaries
+## Non-negotiable boundaries
 
-- `miner-test` owns test discovery, device lifecycle, mutable-state cleanup,
-  detailed evidence, privacy, provenance, and child-result publication.
-- `miner-orchestrator` owns event trust, gate planning, durable state, lab
-  leases, optional firmware deployment, worker execution, parent gate
-  publication, and child-result linking.
-- The orchestrator must not duplicate detailed child publication or upload
-  child artifacts itself.
-- Mining QA Status is an external collector and presentation service. It does
-  not receive lab device credentials or control hardware.
-- Devices execute on the host that owns their USB and private lab coordinates.
+- The orchestrator owns authorization, planning, durable state, exclusive lab
+  leases, optional verified firmware deployment, runner installation/process
+  execution, parent gate publication, and child-result linking.
+- `mining-qa-testcode` owns test discovery, hardware lifecycle, mutable-state
+  cleanup, detailed evidence, privacy, source provenance, result-pointer
+  writing, and child-result publication.
+- Do not copy runner modules or hardware test cases into this repository. Do not
+  reconstruct or upload detailed child results in the orchestrator.
+- Change the cross-repository process contract only through a versioned,
+  coordinated reader/writer migration. Compatible readers ship before a new
+  field becomes required.
+- Mining QA Status never receives private device credentials and does not
+  control lab hardware.
 
-## Hardware, security, and privacy safety
+## Hardware, trust, and privacy safety
 
-- Hardware writes require an explicit non-read-only configuration and a valid,
-  captured cleanup baseline.
-- Cleanup failures are test errors and must never be hidden by a passing test
-  body.
-- Never write redaction markers, masked passwords, unresolved environment
-  placeholders, or artifact-derived values to a device.
-- Preserve rollback paths. Verify original mutable state after a test that
-  changes pool, pause, or other device settings.
-- Secrets are supplied through named environment variables. Do not serialize
-  resolved secrets into TOML, YAML, logs, artifacts, metadata, subprocess
-  arguments, or published results.
-- Bound every network response, serial input, uploaded artifact, and metadata
-  field. Safe reads may retry as documented; writes must not be retried unless
-  the protocol proves idempotence.
-- Firmware deployment requires an immutable source commit, successful matching
-  build, verified archive digest and member, expected board identity, bounded
-  upload, post-reboot identity check, and fail-closed deployment marker.
-- Untrusted pull requests require approval of one exact freshly revalidated
-  head SHA. Do not broaden that approval to a contributor or future commit.
-- First observation of a repository source establishes a cursor baseline and
-  must not unexpectedly schedule hardware.
-- A newer PR head may supersede queued work but must never interrupt an active
-  assignment before device cleanup.
-- SSH worker execution must keep agent forwarding disabled and pass only the
-  allowlisted environment.
+- First observation of a source establishes a cursor baseline; it must not
+  unexpectedly schedule historical hardware work.
+- Untrusted pull requests require approval for one exact, freshly revalidated
+  head SHA. Never broaden approval to a contributor or later commit.
+- A new PR head may supersede queued work but must not interrupt an active
+  assignment before runner cleanup.
+- Acquire all device leases before testcode installation, firmware deployment,
+  or execution; release them on every terminal path.
+- Firmware deployment requires immutable source/build provenance, verified
+  archive digest/member, expected board identity, bounded upload, post-reboot
+  verification, and fail-closed markers.
+- Secrets come from named environment variables. Never serialize resolved
+  secrets into YAML, logs, metadata, state, subprocess arguments, or results.
+- Bound every network response, artifact, worker log, result pointer, and
+  metadata field. Do not retry non-idempotent writes without protocol proof.
+- SSH execution disables agent forwarding and passes only the allowlisted
+  environment plus the explicit runner contract.
+- Service restart or lease release is not proof of physical device cleanup.
 
 ## Project commands
 
-Use the repository virtual environment when present. Do not invent or claim
-formatters, linters, or hardware commands that the repository does not define.
+Use the repository virtual environment when present.
 
 | Purpose | Command |
 |---|---|
-| Install runner and orchestrator | `.venv/bin/python -m pip install -e '.[orchestrator]'` |
+| Install service | `.venv/bin/python -m pip install -e .` |
 | Full unit tests | `PYTHONPATH=src .venv/bin/python -m unittest discover -s tests/unit -v` |
 | One unit module | `PYTHONPATH=src .venv/bin/python -m unittest tests.unit.<module> -v` |
+| Spec integrity | `PYTHONPATH=src .venv/bin/python -m unittest tests.unit.test_specs -v` |
 | Build wheel and sdist | `python3 -m build --no-isolation` |
-| Validate orchestrator config | `.venv/bin/miner-orchestrator --config <local-yaml> validate` |
-| Run hardware tests | `.venv/bin/miner-test --config <local-toml>` |
-| Documentation integrity | `PYTHONPATH=src .venv/bin/python -m unittest tests.unit.test_specs -v` |
-| Validate repository skills | `./scripts/validate-codex-skills` |
+| Validate config | `.venv/bin/miner-orchestrator --config <local-yaml> validate` |
+| Validate skills | `./scripts/validate-codex-skills` |
 | Inspect skill installation | `./scripts/manage-codex-skills status all` |
-| Whitespace validation | `git diff --check` |
+| Whitespace | `git diff --check` |
 
-Hardware commands require a user-authorized target and local ignored profile.
-Before HIL, re-check live device identity, firmware source, pool, serial path,
-read-only state, and publication destination. After HIL, verify cleanup and
-healthy mining independently.
+Do not invent a formatter, linter, hardware command, or service path that the
+repository does not define.
 
-## Verification expectations by change
+## Verification expectations
 
 | Change | Minimum evidence |
 |---|---|
-| Runner/config/test selection | Focused tests, full unit suite, package build |
-| Device lifecycle or write path | Fake-device regression, negative safety case, cleanup assertion, full unit suite |
-| Interface or protocol | Boundary/error tests, bounded-input behavior, full unit suite |
-| Privacy/provenance/publishing | Redaction and provenance tests, payload assertions, full unit suite |
-| Orchestrator config/API | Validation, auth/network/ETag tests, full unit suite |
-| Events/planning/database | Idempotence, trust, supersession, lease/recovery tests, full unit suite |
-| Firmware deployment | Exact-SHA/digest/member/board/reboot/failure tests; HIL only when authorized |
-| Repository skill or service deployment | Skill/install/inspector/unit tests, spec integrity, package build; live service only when authorized |
-| Documentation only | Spec integrity test, maintenance checklist, `git diff --check` |
+| Config/API/UI | validation plus auth, network, ETag, error, and unit tests |
+| Events/planning/database | idempotence, trust, supersession, lease, recovery, and unit tests |
+| Testcode bootstrap/process contract | exact-SHA, dirty/wrong-origin, ordering, bounded pointer, local/SSH, and unit tests |
+| Firmware deployment | SHA/digest/member/board/reboot/failure tests; HIL only when authorized |
+| Service deployment or skill | inspector/installer/unit/spec/skill checks and package build; live service only when authorized |
+| Documentation only | spec integrity, maintenance checklist, and `git diff --check` |
 
-## Repository hygiene
+## Repository hygiene and done criteria
 
-- Never commit local TOML/YAML profiles, service wrappers, API tokens, device
-  coordinates, photos, run artifacts, firmware caches, or generated package
-  output.
-- Inspect staged and unstaged changes separately. Stage only files belonging to
-  the requested work.
-- Commit and push only when explicitly authorized. Preserve remote work and
-  verify the exact remote SHA after publication.
-- Keep feature changes, tests, specs, examples, and user documentation
-  synchronized.
-
-## Definition of done
-
-- Requested behavior is implemented or the requested analysis is complete.
-- Relevant verification passed, or limitations are reported precisely.
-- Public behavior and important constraints match the specs.
-- New feature specs are indexed exactly once.
-- Acceptance evidence, lifecycle, last-reconciled date, and changelog are
-  current.
-- Temporary decisions that became durable were moved from `plans/` into the
-  appropriate feature spec.
-- `specs/MAINTENANCE.md` has been applied for spec-worthy work.
-- Unrelated files remain untouched.
+- Never commit private YAML, service overrides, device coordinates, tokens,
+  photos, SQLite state, job output, firmware caches, worker checkouts, virtual
+  environments, or generated packages.
+- Inspect staged and unstaged changes separately and stage only in-scope files.
+- Commit and push only when explicitly authorized; preserve remote work and
+  verify the exact remote SHA.
+- Work is done when requested behavior is implemented, specs and tests agree,
+  acceptance evidence is current, relevant verification has passed (or limits
+  are precise), the maintenance checklist was applied, and unrelated files are
+  untouched.

@@ -1,6 +1,6 @@
 ---
 name: manage-lab-orchestrator-deployment
-description: Inspect, install, update, restart, roll back, and troubleshoot the miner-testcode lab orchestrator deployment as a systemd user service. Use when working on a live or proposed miner-orchestrator service, its exact deployed revision, release/venv layout, private config and state boundaries, health checks, journal logs, safe idle cutover, or rollback. Do not use this skill to run hardware tests or deploy firmware unless the user separately requests those actions.
+description: Inspect, install, update, restart, roll back, and troubleshoot the mining-qa-lab orchestrator deployment as a systemd user service. Use when working on a live or proposed miner-orchestrator service, its exact deployed revision, release/venv layout, private config and state boundaries, health checks, journal logs, safe idle cutover, or rollback. Do not use this skill to run hardware tests or deploy firmware unless the user separately requests those actions.
 ---
 
 # Manage Lab Orchestrator Deployment

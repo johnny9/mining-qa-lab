@@ -4,10 +4,10 @@
 
 | Component | Responsibility | Implementation pointer |
 |---|---|---|
-| Inventory validator | Validate host/device/setup relationships and coordinates | `src/miner_testcode/orchestrator/config.py` |
-| Probe API | Perform bounded host, device, USB, photo, and setup checks | `src/miner_testcode/orchestrator/web.py` |
-| Operator UI | Present logical identity and preflight outcomes | `src/miner_testcode/orchestrator/ui.py` |
-| Executor/deployer | Consume setup resources after leases | `src/miner_testcode/orchestrator/engine.py`, `src/miner_testcode/orchestrator/firmware.py` |
+| Inventory validator | Validate host/device/setup relationships and coordinates | `src/mining_qa_lab/config.py` |
+| Probe API | Perform bounded host, device, USB, photo, and setup checks | `src/mining_qa_lab/web.py` |
+| Operator UI | Present logical identity and preflight outcomes | `src/mining_qa_lab/ui.py` |
+| Executor/deployer | Consume setup resources after leases | `src/mining_qa_lab/engine.py`, `src/mining_qa_lab/firmware.py` |
 
 ## Interfaces and contracts
 
@@ -92,7 +92,7 @@ Probes should be safe to repeat and must not monopolize shared hardware.
 | [Configuration and control plane](../configuration-and-control-plane/SPEC.md) | Validates and persists inventory. |
 | [Artifact resolution and deployment](../artifact-resolution-and-deployment/SPEC.md) | Uses board/API identity before OTA. |
 | [Assignment execution](../assignment-execution/SPEC.md) | Resolves host/profile/devices and leases setup resources. |
-| [Device capability contract](../../test-runner/device-capability-contract/SPEC.md) | Runner validates runtime test capabilities after launch. |
+| [Device capability contract](https://github.com/johnny9/mining-qa-testcode/blob/main/specs/test-runner/device-capability-contract/SPEC.md) | Runner validates runtime test capabilities after launch. |
 
 ## Verification approach
 

@@ -1,6 +1,6 @@
 ---
 name: specs
-description: Create, update, reconcile, and review durable miner-testcode specifications under specs/. Use for new features; observable behavior changes; APIs, protocols, files, payloads, schemas, migrations, hardware interfaces, or architectural changes; security-, safety-, performance-, resource-, recovery-, or compatibility-relevant work; implementation from an existing spec; PRs missing documentation; project overview or story-map refreshes; and product or architecture reviews.
+description: Create, update, reconcile, and review durable mining-qa-lab specifications under specs/. Use for new features; observable behavior changes; APIs, protocols, files, payloads, schemas, migrations, hardware interfaces, or architectural changes; security-, safety-, performance-, resource-, recovery-, or compatibility-relevant work; implementation from an existing spec; PRs missing documentation; project overview or story-map refreshes; and product or architecture reviews.
 ---
 
 # Project specifications
@@ -27,10 +27,12 @@ Include symbols, paths, protocols, commands, hardware components, or external
 systems only when they clarify a durable contract, constraint, ownership
 boundary, risk, or verification method.
 
-Preserve the project boundary: `miner-test` owns detailed child execution and
-publication; `miner-orchestrator` owns authorized gate aggregation and child
-links. Never document or implement a transfer of private lab control to Mining
-QA Status without an explicit architecture decision.
+Preserve the repository boundary: external `mining-qa-testcode` owns detailed
+child execution and publication; `mining-qa-lab` owns authorized gate
+aggregation and child links. Cross-boundary changes require a coordinated
+versioned contract update in both repositories. Never document or implement a
+transfer of private lab control to Mining QA Status without an explicit
+architecture decision.
 
 ## Select the workflow
 
@@ -269,7 +271,7 @@ Never select a review merely because it is the newest globally.
 - When event trust changes, test source baselining, deduplication, contributor
   rules, exact-SHA approval, and queued-versus-running supersession.
 - When parent publication changes, preserve detailed child publication and
-  artifact ownership in `miner-test`.
+  artifact ownership in external `mining-qa-testcode`.
 
 ## Finish
 

@@ -7,15 +7,15 @@ from unittest import mock
 
 import yaml
 
-from miner_testcode.orchestrator.config import ConfigStore
-from miner_testcode.orchestrator.database import OrchestratorDatabase
-from miner_testcode.orchestrator.engine import OrchestratorEngine
+from mining_qa_lab.config import ConfigStore
+from mining_qa_lab.database import OrchestratorDatabase
+from mining_qa_lab.engine import OrchestratorEngine
 from test_orchestrator import configuration
 
 try:
     from httpx import ASGITransport, AsyncClient
 
-    from miner_testcode.orchestrator.web import create_app
+    from mining_qa_lab.web import create_app
 except ImportError:
     ASGITransport = None  # type: ignore[assignment,misc]
     AsyncClient = None  # type: ignore[assignment,misc]

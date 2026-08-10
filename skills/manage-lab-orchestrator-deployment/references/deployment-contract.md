@@ -19,14 +19,14 @@ Prefer this portable user-service layout unless observed deployment constraints
 require different absolute paths:
 
 ```text
-$HOME/.local/src/miner-testcode/                 source checkout
-$HOME/.local/opt/miner-testcode/releases/SHA/   immutable code + service venv
-$HOME/.local/opt/miner-testcode/current          link to active release
-$HOME/.config/miner-testcode/orchestrator.yaml   private configuration
-$HOME/.config/miner-testcode/orchestrator.env    optional mode-0600 secrets
-$HOME/.local/state/miner-orchestrator/            SQLite, token, jobs, pins
-$HOME/.local/state/miner-testcode/                runner artifacts
-$HOME/.local/lib/miner-testcode/                  managed worker source + venv
+$HOME/.local/src/mining-qa-lab/                 source checkout
+$HOME/.local/opt/mining-qa-lab/releases/SHA/   immutable code + service venv
+$HOME/.local/opt/mining-qa-lab/current          link to active release
+$HOME/.config/mining-qa-lab/orchestrator.yaml   private configuration
+$HOME/.config/mining-qa-lab/orchestrator.env    optional mode-0600 secrets
+$HOME/.local/state/mining-qa-lab/            SQLite, token, jobs, pins
+$HOME/.local/state/mining-qa-testcode/                runner artifacts
+$HOME/.local/lib/mining-qa-testcode/                  managed worker source + venv
 ```
 
 The service venv is inside one release. The worker venv is outside releases and
@@ -55,8 +55,8 @@ python3 skills/manage-lab-orchestrator-deployment/scripts/inspect_deployment.py 
 python3 skills/manage-lab-orchestrator-deployment/scripts/inspect_deployment.py \
   --unit miner-orchestrator.service \
   --health-url http://127.0.0.1:8765/api/v1/health \
-  --orchestrator "$HOME/.local/opt/miner-testcode/current/.venv/bin/miner-orchestrator" \
-  --config "$HOME/.config/miner-testcode/orchestrator.yaml"
+  --orchestrator "$HOME/.local/opt/mining-qa-lab/current/.venv/bin/miner-orchestrator" \
+  --config "$HOME/.config/mining-qa-lab/orchestrator.yaml"
 ```
 
 Health `status: ok` proves only that the API answered with its current config
@@ -94,7 +94,7 @@ Preparation must not change the live `current` link or running process.
 3. Create `releases/<full-sha>` without overwriting an existing directory.
    Export only tracked source for that SHA, record the credential-free source,
    commit, and tree, then create its `.venv`.
-4. Install the project with the `orchestrator` extra into that release venv.
+4. Install the `mining-qa-lab` project into that release venv.
 5. Run full unit tests, spec integrity, skill validation, package build, and
    whitespace checks from the exact candidate source as repository policy requires.
 6. Validate the live private YAML using the candidate's `miner-orchestrator`.
@@ -105,13 +105,13 @@ Preparation must not change the live `current` link or running process.
 Example command shape; resolve variables to inspected explicit paths before use:
 
 ```bash
-git -C "$HOME/.local/src/miner-testcode" archive TARGET_FULL_SHA | \
-  tar -x -C "$HOME/.local/opt/miner-testcode/releases/TARGET_FULL_SHA"
+git -C "$HOME/.local/src/mining-qa-lab" archive TARGET_FULL_SHA | \
+  tar -x -C "$HOME/.local/opt/mining-qa-lab/releases/TARGET_FULL_SHA"
 python3 -m venv \
-  "$HOME/.local/opt/miner-testcode/releases/TARGET_FULL_SHA/.venv"
-"$HOME/.local/opt/miner-testcode/releases/TARGET_FULL_SHA/.venv/bin/python" \
+  "$HOME/.local/opt/mining-qa-lab/releases/TARGET_FULL_SHA/.venv"
+"$HOME/.local/opt/mining-qa-lab/releases/TARGET_FULL_SHA/.venv/bin/python" \
   -m pip install --no-input --editable \
-  "$HOME/.local/opt/miner-testcode/releases/TARGET_FULL_SHA[orchestrator]"
+  "$HOME/.local/opt/mining-qa-lab/releases/TARGET_FULL_SHA"
 ```
 
 `TARGET_FULL_SHA` is explanatory text, not a command to paste unchanged.

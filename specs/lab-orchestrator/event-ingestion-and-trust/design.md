@@ -4,11 +4,11 @@
 
 | Component | Responsibility | Implementation pointer |
 |---|---|---|
-| GitHub client | Fetch branch/PR/compare facts with bounded API calls | `src/miner_testcode/orchestrator/events.py` |
-| QA feed client | Consume ordered delivery records from Mining QA Status | `src/miner_testcode/orchestrator/events.py` |
-| Event collector | Apply policy and create normalized source events | `src/miner_testcode/orchestrator/events.py` |
-| Database | Persist events, unique source identities, cursors, and ETags | `src/miner_testcode/orchestrator/database.py` |
-| Engine/API | Poll sources and approve exact PR heads/manual runs | `src/miner_testcode/orchestrator/engine.py`, `src/miner_testcode/orchestrator/web.py` |
+| GitHub client | Fetch branch/PR/compare facts with bounded API calls | `src/mining_qa_lab/events.py` |
+| QA feed client | Consume ordered delivery records from Mining QA Status | `src/mining_qa_lab/events.py` |
+| Event collector | Apply policy and create normalized source events | `src/mining_qa_lab/events.py` |
+| Database | Persist events, unique source identities, cursors, and ETags | `src/mining_qa_lab/database.py` |
+| Engine/API | Poll sources and approve exact PR heads/manual runs | `src/mining_qa_lab/engine.py`, `src/mining_qa_lab/web.py` |
 
 ## Interfaces and contracts
 

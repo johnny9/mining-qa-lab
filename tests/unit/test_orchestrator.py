@@ -9,13 +9,19 @@ from unittest import mock
 
 import yaml
 
-from miner_testcode.errors import ConfigError
-from miner_testcode.orchestrator.config import ConfigStore, validate_config
-from miner_testcode.orchestrator.database import OrchestratorDatabase
-from miner_testcode.orchestrator.engine import OrchestratorEngine, Planner
-from miner_testcode.orchestrator.events import EventCollector, cron_matches, paths_match
-from miner_testcode.orchestrator.qa_status import GatePublisher
-from miner_testcode.orchestrator.testcode import TestcodeInstallation
+from mining_qa_lab.errors import ConfigError
+from mining_qa_lab.config import ConfigStore, validate_config
+from mining_qa_lab.database import OrchestratorDatabase
+from mining_qa_lab.engine import (
+    MAX_RESULT_POINTER_BYTES,
+    OrchestratorEngine,
+    Planner,
+    _load_result_pointer,
+)
+from mining_qa_lab.events import EventCollector, cron_matches, paths_match
+from mining_qa_lab.http import PublishError
+from mining_qa_lab.qa_status import GatePublisher
+from mining_qa_lab.testcode import TestcodeInstallation
 
 
 def configuration(root: Path) -> dict:
@@ -178,7 +184,7 @@ class ConfigStoreTest(unittest.TestCase):
             document = configuration(root)
             document["testcode"] = {
                 "enabled": True,
-                "repository": "johnny9/miner-testcode",
+                "repository": "johnny9/mining-qa-testcode",
                 "ref": "main",
                 "install_timeout": 120,
             }
@@ -223,6 +229,36 @@ class ConfigStoreTest(unittest.TestCase):
 
 
 class SchedulingTest(unittest.TestCase):
+    def test_result_pointer_contract_is_bounded_and_versioned(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            pointer = Path(directory) / "result-pointer.json"
+            pointer.write_text(
+                json.dumps(
+                    {
+                        "contract_version": 1,
+                        "status": "passed",
+                        "publishers": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self.assertEqual(_load_result_pointer(pointer)["contract_version"], 1)
+
+            pointer.write_text(
+                json.dumps({"contract_version": 2, "publishers": []}),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(PublishError, "unsupported.*version"):
+                _load_result_pointer(pointer)
+
+            pointer.write_bytes(b" " * (MAX_RESULT_POINTER_BYTES + 1))
+            with self.assertRaisesRegex(PublishError, "exceeds"):
+                _load_result_pointer(pointer)
+
+            pointer.unlink()
+            with self.assertRaisesRegex(PublishError, "did not write"):
+                _load_result_pointer(pointer)
+
     def test_cron_and_change_filters(self) -> None:
         when = datetime(2026, 8, 8, 3, 17, tzinfo=UTC)
         self.assertTrue(cron_matches("17 3 * * *", when))
@@ -438,13 +474,15 @@ class SchedulingTest(unittest.TestCase):
 import json, os
 from pathlib import Path
 metadata = json.loads(os.environ["MINER_TEST_ORCHESTRATION_METADATA"])
+assert metadata["contract_version"] == 1
 assert metadata["gate_id"] == "firmware-smoke"
 pointer = Path(os.environ["MINER_TEST_RESULT_POINTER"])
 pointer.parent.mkdir(parents=True, exist_ok=True)
 pointer.write_text(json.dumps({
+    "contract_version": 1,
     "status": "passed",
     "publishers": [{
-        "name": "mining_qa_status", "success": True,
+        "name": "mining_qa_status", "success": True, "required": True,
         "url": "https://qa.example/results/child-result-id"
     }]
 }))
@@ -498,20 +536,22 @@ import json, os
 from pathlib import Path
 metadata = json.loads(os.environ["MINER_TEST_ORCHESTRATION_METADATA"])
 assert metadata["testcode"] == {
-    "repository": "johnny9/miner-testcode",
+    "repository": "johnny9/mining-qa-testcode",
     "ref": "main",
     "commit_sha": "c" * 40,
 }
 pointer = Path(os.environ["MINER_TEST_RESULT_POINTER"])
 pointer.parent.mkdir(parents=True, exist_ok=True)
-pointer.write_text(json.dumps({"status": "passed", "publishers": []}))
+pointer.write_text(json.dumps({
+    "contract_version": 1, "status": "passed", "publishers": []
+}))
 """,
                 encoding="utf-8",
             )
             executable.chmod(0o700)
             (checkout / "runner.toml").write_text("", encoding="utf-8")
             installation = TestcodeInstallation(
-                repository="johnny9/miner-testcode",
+                repository="johnny9/mining-qa-testcode",
                 ref="main",
                 commit_sha="c" * 40,
                 checkout=checkout,

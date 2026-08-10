@@ -13,6 +13,8 @@ environment, command, log, timeout, deployment, and child-result correlation.
 
 ## Changelog
 
+- 2026-08-10: Split execution from the testcode repository and established a
+  bounded, versioned orchestration contract with independent fixtures.
 - 2026-08-10: Inserted optional exact testcode preparation before firmware
   deployment and runner execution.
 - 2026-08-10: Defined resource acquisition, local/SSH worker command, environment

@@ -8,15 +8,16 @@
   devices/PR policy, exact commit provenance, and bounded timeout.
 - [x] **ORCH-EXEC-AC-03:** Environment is allowlisted plus explicit runner
   correlation variables; SSH agent forwarding is disabled.
-- [x] **ORCH-EXEC-AC-04:** Worker log and bounded result pointer produce durable
-  normalized assignment status, detail, and child ID/URL.
+- [x] **ORCH-EXEC-AC-04:** Worker log and the version-1, 64-KiB-bounded result
+  pointer produce durable normalized assignment status, detail, and child URL/ID.
 
 ## Interfaces and compatibility
 
 - [x] **ORCH-EXEC-AC-05:** Runner remains owner of test lifecycle, cleanup,
   artifacts, and detailed child publication.
-- [x] **ORCH-EXEC-AC-06:** Missing/malformed pointer, timeout, SSH/process, or
-  deployment failure cannot be recorded as passed.
+- [x] **ORCH-EXEC-AC-06:** Missing/malformed/oversized/unsupported-version
+  pointer, timeout, SSH/process, or deployment failure cannot be recorded as
+  passed.
 
 ## Quality attributes
 
@@ -27,9 +28,9 @@
 
 ## Verification evidence
 
-- `tests.unit.test_orchestrator` covers local execution, optional installed
-  runner metadata/ordering, pointer, leases, and child publication linkage;
-  reconciled 2026-08-10.
+- `tests.unit.test_orchestrator` covers local execution, versioned metadata,
+  bounded/unsupported pointer handling, optional installed runner ordering,
+  leases, and child publication linkage; reconciled 2026-08-10.
 - Live local/SSH HIL was not run for this documentation iteration.
 
 ## Acceptance rule

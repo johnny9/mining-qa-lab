@@ -4,10 +4,10 @@
 
 | Component | Responsibility | Implementation pointer |
 |---|---|---|
-| Configuration validator | Validate repository, branch, timeout, and per-host managed paths | `src/miner_testcode/orchestrator/config.py` |
-| Testcode installer | Resolve, pin, clone/fetch, install, and verify worker testcode | `src/miner_testcode/orchestrator/testcode.py` |
-| Assignment executor | Run bootstrap before firmware/test and launch its executable | `src/miner_testcode/orchestrator/engine.py` |
-| Runner provenance guard | Reject expected repository/SHA mismatch before hardware | `src/miner_testcode/runner.py` |
+| Configuration validator | Validate repository, branch, timeout, and per-host managed paths | `src/mining_qa_lab/config.py` |
+| Testcode installer | Resolve, pin, clone/fetch, install, and verify worker testcode | `src/mining_qa_lab/testcode.py` |
+| Assignment executor | Run bootstrap before firmware/test and launch its executable | `src/mining_qa_lab/engine.py` |
+| External runner provenance guard | Reject expected repository/SHA mismatch before hardware | [`mining-qa-testcode` runner](https://github.com/johnny9/mining-qa-testcode/blob/main/src/miner_testcode/runner.py) |
 
 ## Interfaces and contracts
 
@@ -132,9 +132,10 @@ paths to the executor and public repository/ref/SHA metadata to the runner.
 |---|---|
 | [Assignment execution](../assignment-execution/SPEC.md) | Runs bootstrap and uses the returned executable/profile root. |
 | [Configuration and control plane](../configuration-and-control-plane/SPEC.md) | Validates opt-in policy and managed host paths. |
-| [Artifacts, privacy, and provenance](../../test-runner/artifacts-privacy-and-provenance/SPEC.md) | Independently records and verifies the exact executing checkout. |
+| [Artifacts, privacy, and provenance](https://github.com/johnny9/mining-qa-testcode/blob/main/specs/test-runner/artifacts-privacy-and-provenance/SPEC.md) | Independently records and verifies the exact executing checkout. |
 | [Artifact resolution and deployment](../artifact-resolution-and-deployment/SPEC.md) | Bootstrap must succeed before any firmware deployment. |
 | [Service deployment](../service-deployment/SPEC.md) | Owns the separate orchestrator release/venv; worker testcode updates never update or restart that service. |
+| [Orchestration contract v1](../../../contracts/orchestration-v1.md) | Carries the exact installed repository/ref/SHA to the runner for independent verification. |
 
 ## Verification approach
 

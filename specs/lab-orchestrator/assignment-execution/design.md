@@ -4,11 +4,11 @@
 
 | Component | Responsibility | Implementation pointer |
 |---|---|---|
-| Assignment executor | Resolve snapshot/resources, deploy, invoke worker, ingest pointer | `src/miner_testcode/orchestrator/engine.py` |
-| Database | Select work, acquire/release leases, persist terminal result | `src/miner_testcode/orchestrator/database.py` |
-| Testcode installer | Optionally pin and prepare an exact worker checkout/venv | `src/miner_testcode/orchestrator/testcode.py` |
-| Firmware deployer | Establish optional gate-wide target firmware first | `src/miner_testcode/orchestrator/firmware.py` |
-| Runner | Own test lifecycle, evidence, cleanup, and detailed child publication | `src/miner_testcode/runner.py` |
+| Assignment executor | Resolve snapshot/resources, deploy, invoke worker, ingest pointer | `src/mining_qa_lab/engine.py` |
+| Database | Select work, acquire/release leases, persist terminal result | `src/mining_qa_lab/database.py` |
+| Testcode installer | Optionally pin and prepare an exact worker checkout/venv | `src/mining_qa_lab/testcode.py` |
+| Firmware deployer | Establish optional gate-wide target firmware first | `src/mining_qa_lab/firmware.py` |
+| External runner | Own test lifecycle, evidence, cleanup, and detailed child publication | [`mining-qa-testcode` runner](https://github.com/johnny9/mining-qa-testcode/blob/main/src/miner_testcode/runner.py) |
 
 ## Interfaces and contracts
 
@@ -48,6 +48,8 @@
 
 - Each assignment gets `state_dir/jobs/<gate>/<assignment>/worker.log` and
   `result-pointer.json`. Logs/details and pointer reads are bounded/validated.
+- Metadata and result-pointer fields follow
+  [orchestration contract v1](../../../contracts/orchestration-v1.md).
 
 ## Contract constraints
 
@@ -109,8 +111,9 @@ Process/SSH/pointer waits, logs, and stored error details are bounded.
 | [Persistence, leases, and recovery](../persistence-leases-and-recovery/SPEC.md) | Supplies exclusive resources and durable outcomes. |
 | [Artifact resolution and deployment](../artifact-resolution-and-deployment/SPEC.md) | Runs once before test execution when configured. |
 | [Testcode bootstrap](../testcode-bootstrap/SPEC.md) | Supplies an exact managed runner before deployment and execution. |
-| [Configuration and selection](../../test-runner/configuration-and-selection/SPEC.md) | Runner consumes selected profile/pattern/devices. |
-| [Result model and publishing](../../test-runner/result-model-and-publishing/SPEC.md) | Defines child-result pointer and publisher identity. |
+| [Configuration and selection](https://github.com/johnny9/mining-qa-testcode/blob/main/specs/test-runner/configuration-and-selection/SPEC.md) | Runner consumes selected profile/pattern/devices. |
+| [Result model and publishing](https://github.com/johnny9/mining-qa-testcode/blob/main/specs/test-runner/result-model-and-publishing/SPEC.md) | Defines child-result pointer and publisher identity. |
+| [Orchestration contract v1](../../../contracts/orchestration-v1.md) | Defines the versioned process, environment, metadata, size, and pointer boundary. |
 
 ## Verification approach
 

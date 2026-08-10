@@ -4,10 +4,10 @@
 
 | Component | Responsibility | Implementation pointer |
 |---|---|---|
-| FastAPI app | Security middleware, REST routes, lifespan, background loop | `src/miner_testcode/orchestrator/web.py` |
-| UI renderer | Render overview, gates, lab, trigger, and advanced pages | `src/miner_testcode/orchestrator/ui.py` |
-| CLI | Initialize/validate config, serve, poll once, and manual run | `src/miner_testcode/orchestrator/cli.py` |
-| Engine/store/database | Execute authorized domain operations | `src/miner_testcode/orchestrator/engine.py`, `src/miner_testcode/orchestrator/config.py`, `src/miner_testcode/orchestrator/database.py` |
+| FastAPI app | Security middleware, REST routes, lifespan, background loop | `src/mining_qa_lab/web.py` |
+| UI renderer | Render overview, gates, lab, trigger, and advanced pages | `src/mining_qa_lab/ui.py` |
+| CLI | Initialize/validate config, serve, poll once, and manual run | `src/mining_qa_lab/cli.py` |
+| Engine/store/database | Execute authorized domain operations | `src/mining_qa_lab/engine.py`, `src/mining_qa_lab/config.py`, `src/mining_qa_lab/database.py` |
 
 ## Interfaces and contracts
 

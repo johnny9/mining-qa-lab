@@ -1,6 +1,6 @@
 [Unit]
 Description=Mining lab gate orchestrator
-Documentation=https://github.com/johnny9/miner-testcode/blob/main/docs/ORCHESTRATOR_DEPLOYMENT.md
+Documentation=https://github.com/johnny9/mining-qa-lab/blob/main/docs/ORCHESTRATOR_DEPLOYMENT.md
 Wants=network-online.target
 After=network-online.target
 StartLimitIntervalSec=5min
@@ -8,10 +8,10 @@ StartLimitBurst=3
 
 [Service]
 Type=simple
-WorkingDirectory=%h/.local/opt/miner-testcode/current
-EnvironmentFile=-%h/.config/miner-testcode/orchestrator.env
-ExecStartPre=/usr/bin/env %h/.local/opt/miner-testcode/current/.venv/bin/miner-orchestrator --config %h/.config/miner-testcode/orchestrator.yaml validate
-ExecStart=/usr/bin/env %h/.local/opt/miner-testcode/current/.venv/bin/miner-orchestrator --config %h/.config/miner-testcode/orchestrator.yaml serve
+WorkingDirectory=%h/.local/opt/mining-qa-lab/current
+EnvironmentFile=-%h/.config/mining-qa-lab/orchestrator.env
+ExecStartPre=/usr/bin/env %h/.local/opt/mining-qa-lab/current/.venv/bin/miner-orchestrator --config %h/.config/mining-qa-lab/orchestrator.yaml validate
+ExecStart=/usr/bin/env %h/.local/opt/mining-qa-lab/current/.venv/bin/miner-orchestrator --config %h/.config/mining-qa-lab/orchestrator.yaml serve
 Restart=on-failure
 RestartSec=10s
 TimeoutStopSec=infinity
@@ -21,12 +21,12 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
 # ConfigStore atomically replaces YAML and writes a backup in this directory.
-ReadWritePaths=-%h/.config/miner-testcode
+ReadWritePaths=-%h/.config/mining-qa-lab
 # Do not let that directory allowance make the optional secret file writable.
-ReadOnlyPaths=-%h/.config/miner-testcode/orchestrator.env
-ReadWritePaths=-%h/.local/state/miner-orchestrator
-ReadWritePaths=-%h/.local/state/miner-testcode
-ReadWritePaths=-%h/.local/lib/miner-testcode
+ReadOnlyPaths=-%h/.config/mining-qa-lab/orchestrator.env
+ReadWritePaths=-%h/.local/state/mining-qa-lab
+ReadWritePaths=-%h/.local/state/mining-qa-testcode
+ReadWritePaths=-%h/.local/lib/mining-qa-testcode
 ProtectControlGroups=true
 ProtectKernelModules=true
 ProtectKernelTunables=true

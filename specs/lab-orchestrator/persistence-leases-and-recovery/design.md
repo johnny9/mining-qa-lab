@@ -4,9 +4,9 @@
 
 | Component | Responsibility | Implementation pointer |
 |---|---|---|
-| Database | Schema, transactions, queries, state transitions, and leases | `src/miner_testcode/orchestrator/database.py` |
-| Engine | Select next work, finish gates, and invoke startup recovery | `src/miner_testcode/orchestrator/engine.py` |
-| Operator API | Expose history, cancel, and retry controls | `src/miner_testcode/orchestrator/web.py` |
+| Database | Schema, transactions, queries, state transitions, and leases | `src/mining_qa_lab/database.py` |
+| Engine | Select next work, finish gates, and invoke startup recovery | `src/mining_qa_lab/engine.py` |
+| Operator API | Expose history, cancel, and retry controls | `src/mining_qa_lab/web.py` |
 
 ## Interfaces and contracts
 
@@ -91,7 +91,7 @@ and hardware operations never run while holding a write transaction.
 | [Gate planning and supersession](../gate-planning-and-supersession/SPEC.md) | Creates atomic durable matrices. |
 | [Assignment execution](../assignment-execution/SPEC.md) | Requires/releases device leases and stores outcomes. |
 | [Parent gate publication](../parent-gate-publication/SPEC.md) | Reads durable aggregate state. |
-| [Lifecycle and cleanup](../../test-runner/lifecycle-and-cleanup/SPEC.md) | Runner cleanup is distinct from orchestrator lease release. |
+| [Lifecycle and cleanup](https://github.com/johnny9/mining-qa-testcode/blob/main/specs/test-runner/lifecycle-and-cleanup/SPEC.md) | Runner cleanup is distinct from orchestrator lease release. |
 | [Service deployment](../service-deployment/SPEC.md) | Preserves external SQLite state across exact-release cutover and invokes fail-closed recovery after interruption. |
 
 ## Verification approach

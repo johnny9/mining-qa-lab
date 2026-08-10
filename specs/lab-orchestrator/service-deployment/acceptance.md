@@ -38,9 +38,9 @@
 
 ## Verification evidence
 
-- 2026-08-10: The full unit suite passed 102 tests, including temporary-home
-  installer conflicts, bounded inspector behavior, shared safety wording,
-  systemd template invariants, and specification integrity.
+- 2026-08-10: The standalone lab's 48-test unit suite passed, including
+  temporary-home installer conflicts, bounded inspector behavior, shared
+  safety wording, systemd template invariants, and specification integrity.
 - 2026-08-10: Repository skill validation, the standard skill quick validator,
   shell syntax for both documented command sets, `systemd-analyze verify`,
   wheel/sdist build, and `git diff --check` passed.

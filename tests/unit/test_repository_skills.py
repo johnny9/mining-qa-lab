@@ -235,9 +235,9 @@ class SystemdTemplateTest(unittest.TestCase):
         self.assertIn("ProtectSystem=strict", unit)
         self.assertIn("ProtectHome=read-only", unit)
         self.assertIn(
-            "ReadOnlyPaths=-%h/.config/miner-testcode/orchestrator.env", unit
+            "ReadOnlyPaths=-%h/.config/mining-qa-lab/orchestrator.env", unit
         )
-        self.assertIn(".local/lib/miner-testcode", unit)
+        self.assertIn(".local/lib/mining-qa-testcode", unit)
         self.assertNotIn("PrivateDevices=true", unit)
         self.assertNotRegex(unit, r"/(?:home|Users)/[^/%\s]+")
 

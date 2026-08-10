@@ -38,8 +38,9 @@
 
 - `tests.unit.test_orchestrator_testcode`, `tests.unit.test_orchestrator`, and
   `tests.unit.test_config` cover AC-01 through AC-09; reconciled 2026-08-10.
-- The full 91-test unit suite, five-test spec-integrity module, example YAML
-  validation, wheel/sdist build, and `git diff --check` passed 2026-08-10.
+- The standalone lab's 48-test unit suite, five-test spec-integrity module,
+  skill validation, wheel/sdist build (including the packaged example YAML),
+  and `git diff --check` passed 2026-08-10.
 - Live local/SSH installation and HIL were not authorized by this feature
   implementation request, so AC-10 remains unchecked.
 

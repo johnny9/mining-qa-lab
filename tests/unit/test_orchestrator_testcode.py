@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from miner_testcode.orchestrator.testcode import (
+from mining_qa_lab.testcode import (
     CommandResult,
     HostCommandRunner,
     TestcodeInstallError,
@@ -21,7 +21,7 @@ class FakeCommands:
         root: Path,
         *,
         sha: str = "a" * 40,
-        origin: str = "git@github.com:johnny9/miner-testcode.git",
+        origin: str = "git@github.com:johnny9/mining-qa-testcode.git",
         dirty: str = "",
         import_path: Path | None = None,
     ) -> None:
@@ -75,7 +75,7 @@ class FakeCommands:
 def configuration(root: Path) -> tuple[dict, dict, dict]:
     policy = {
         "enabled": True,
-        "repository": "johnny9/miner-testcode",
+        "repository": "johnny9/mining-qa-testcode",
         "ref": "main",
         "install_timeout": 120,
     }
@@ -182,7 +182,7 @@ class HostCommandRunnerTest(unittest.TestCase):
     def test_quotes_remote_command_and_disables_agent_forwarding(self) -> None:
         completed = subprocess.CompletedProcess([], 0, stdout="ok\n")
         with mock.patch(
-            "miner_testcode.orchestrator.testcode.subprocess.run",
+            "mining_qa_lab.testcode.subprocess.run",
             return_value=completed,
         ) as run:
             result = HostCommandRunner().run(

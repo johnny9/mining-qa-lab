@@ -4,10 +4,10 @@
 
 | Component | Responsibility | Implementation pointer |
 |---|---|---|
-| Validator | Normalize schema version 1 and validate references/policies | `src/miner_testcode/orchestrator/config.py` |
-| Config store | Load, digest, back up, and atomically replace YAML | `src/miner_testcode/orchestrator/config.py` |
-| REST control plane | Expose snapshots and revision-checked mutations | `src/miner_testcode/orchestrator/web.py` |
-| Example | Document a complete operator starting point | `configs/orchestrator.example.yaml` |
+| Validator | Normalize schema version 1 and validate references/policies | `src/mining_qa_lab/config.py` |
+| Config store | Load, digest, back up, and atomically replace YAML | `src/mining_qa_lab/config.py` |
+| REST control plane | Expose snapshots and revision-checked mutations | `src/mining_qa_lab/web.py` |
+| Example | Document a complete operator starting point | `src/mining_qa_lab/orchestrator.example.yaml` |
 
 ## Interfaces and contracts
 
@@ -96,7 +96,7 @@ mutations are serialized by the store lock.
 | [Testcode bootstrap](../testcode-bootstrap/SPEC.md) | Consumes validated repository/ref/timeout policy and per-host managed paths. |
 | [Operator API and UI](../operator-api-and-ui/SPEC.md) | Exposes revision-checked control surfaces. |
 | [Service deployment](../service-deployment/SPEC.md) | Keeps private YAML outside releases and aligns configured writable paths with the service sandbox. |
-| [Configuration and selection](../../test-runner/configuration-and-selection/SPEC.md) | Runner profiles referenced by modules/setups remain a separate schema. |
+| [Configuration and selection](https://github.com/johnny9/mining-qa-testcode/blob/main/specs/test-runner/configuration-and-selection/SPEC.md) | Runner profiles referenced by modules/setups remain a separate schema. |
 
 ## Verification approach
 
