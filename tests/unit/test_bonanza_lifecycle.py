@@ -11,6 +11,7 @@ from miner_testcode.artifacts import TestArtifacts
 from miner_testcode.config import DeviceConfig
 from miner_testcode.devices.base import PoolSettings
 from miner_testcode.devices.bitaxe_bonanza import BitaxeBonanzaDevice
+from miner_testcode.errors import DeviceError
 
 
 class FakeApi:
@@ -114,6 +115,78 @@ class FakePoolsApi(FakeApi):
 
 
 class BonanzaLifecycleTest(unittest.IsolatedAsyncioTestCase):
+    def make_device(
+        self, directory: str, artifacts: TestArtifacts, *, name: str
+    ) -> BitaxeBonanzaDevice:
+        config = DeviceConfig(
+            name="fake-bonanza",
+            type="bitaxe_bonanza",
+            interfaces={
+                "api": {"base_url": "http://127.0.0.1", "online_timeout": 2}
+            },
+        )
+        return BitaxeBonanzaDevice(
+            config,
+            project_dir=Path(directory),
+            artifacts=artifacts,
+            logger=logging.getLogger(name),
+        )
+
+    async def test_rejects_redacted_identity_in_device_baseline(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            artifacts = TestArtifacts.create(Path(directory) / "case")
+            device = self.make_device(
+                directory, artifacts, name="test-redacted-device-baseline"
+            )
+            fake_api = FakePoolsApi()
+            fake_api.info["pools"][0]["stratumUser"] = "<redacted-pool-identity>"
+            device.api = fake_api  # type: ignore[assignment]
+
+            with self.assertRaisesRegex(DeviceError, "redaction marker"):
+                await device.snapshot_clean_state()
+
+            self.assertEqual(fake_api.patches, [])
+
+    async def test_rejects_redacted_identity_before_pool_write(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            artifacts = TestArtifacts.create(Path(directory) / "case")
+            device = self.make_device(
+                directory, artifacts, name="test-redacted-pool-write"
+            )
+            fake_api = FakePoolsApi()
+            device.api = fake_api  # type: ignore[assignment]
+
+            for marker in ("<redacted>", "<redacted-pool-identity>"):
+                with self.subTest(marker=marker):
+                    with self.assertRaisesRegex(DeviceError, "redaction marker"):
+                        await device.configure_pool(
+                            PoolSettings(
+                                host="new.pool",
+                                port=5555,
+                                username=marker,
+                            )
+                        )
+
+            self.assertEqual(fake_api.patches, [])
+
+    async def test_rejects_redacted_identity_before_restore_write(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            artifacts = TestArtifacts.create(Path(directory) / "case")
+            device = self.make_device(
+                directory, artifacts, name="test-redacted-pool-restore"
+            )
+            fake_api = FakePoolsApi()
+            device.api = fake_api  # type: ignore[assignment]
+            baseline = await device.snapshot_clean_state()
+            baseline.settings["pools"][0]["stratumUser"] = (  # type: ignore[index]
+                "<redacted-pool-identity>"
+            )
+
+            with self.assertRaisesRegex(DeviceError, "redaction marker"):
+                await device.restore_clean_state(baseline)
+
+            self.assertEqual(fake_api.patches, [])
+
     async def test_new_pool_schema_is_configured_and_fully_restored(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             config = DeviceConfig(

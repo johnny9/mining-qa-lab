@@ -39,6 +39,12 @@ _POOL_SELECTION_FIELDS = (
 )
 
 _MASKED_STRATUM_PASSWORD = "*****"
+_REDACTED_POOL_IDENTITIES = frozenset(
+    {
+        "<redacted>",
+        "<redacted-pool-identity>",
+    }
+)
 
 
 class BitaxeDevice(MiningDevice):
@@ -414,6 +420,9 @@ class BitaxeDevice(MiningDevice):
             settings = {
                 key: info[key] for key in _RESTORABLE_POOL_FIELDS if key in info
             }
+        self._reject_redacted_pool_identities(
+            settings, context="clean-state baseline"
+        )
         baseline_password_env = self.config.options.get("baseline_stratum_password_env")
         if baseline_password_env is not None:
             if not isinstance(baseline_password_env, str) or not baseline_password_env:
@@ -496,6 +505,25 @@ class BitaxeDevice(MiningDevice):
         return value
 
     @staticmethod
+    def _reject_redacted_pool_identities(
+        settings: Mapping[str, Any], *, context: str
+    ) -> None:
+        pools = BitaxeDevice._pool_entries(settings)
+        candidates = (
+            [pool.get("stratumUser") for pool in pools]
+            if pools is not None
+            else [settings.get("stratumUser")]
+        )
+        if any(
+            isinstance(value, str)
+            and value.strip().lower() in _REDACTED_POOL_IDENTITIES
+            for value in candidates
+        ):
+            raise DeviceError(
+                f"refusing to use a redaction marker as a pool identity in {context}"
+            )
+
+    @staticmethod
     def _comparable_pools(pools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         comparable: list[dict[str, Any]] = []
         for pool in pools:
@@ -518,6 +546,9 @@ class BitaxeDevice(MiningDevice):
 
     async def restore_clean_state(self, baseline: CleanState) -> None:
         self.logger.info("restoring clean state for %s", self.name)
+        self._reject_redacted_pool_identities(
+            baseline.settings, context="clean-state restore"
+        )
         info = await self.current_info()
         baseline_pools = self._pool_entries(baseline.settings)
         if baseline_pools is not None:
@@ -607,6 +638,9 @@ class BitaxeDevice(MiningDevice):
             )
 
     async def configure_pool(self, pool: PoolSettings) -> None:
+        self._reject_redacted_pool_identities(
+            {"stratumUser": pool.username}, context="test pool configuration"
+        )
         info = await self.current_info()
         desired: dict[str, Any] = {
             "stratumURL": pool.host,
