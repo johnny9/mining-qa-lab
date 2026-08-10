@@ -13,5 +13,7 @@ preventing lost updates and plaintext-secret storage.
 
 ## Changelog
 
+- 2026-08-10: Added optional testcode repository/ref policy and required
+  per-host managed checkout/venv paths.
 - 2026-08-10: Defined schema ownership, cross-reference validation,
   secret-reference policy, optimistic concurrency, backup, and atomic replace.

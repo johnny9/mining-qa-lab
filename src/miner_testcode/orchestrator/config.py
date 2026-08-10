@@ -21,6 +21,7 @@ from ..errors import ConfigError
 _ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_GIT_REF_CHARS = re.compile(r"^[A-Za-z0-9._/-]+$")
 _SECRET_KEYS = {"token", "password", "private_key", "secret", "api_key"}
 _SECTIONS = {"repositories", "test_modules", "gates"}
 _LAB_SECTIONS = {"hosts", "devices", "setups"}
@@ -75,7 +76,33 @@ def _reject_plaintext_secrets(value: Any, context: str = "config") -> None:
             _reject_plaintext_secrets(item, f"{context}[{index}]")
 
 
-def _validate_host(host_id: str, raw: Any) -> None:
+def _git_branch(value: Any, context: str) -> str:
+    branch = _string(value, context)
+    components = branch.split("/")
+    if (
+        len(branch) > 128
+        or not _GIT_REF_CHARS.fullmatch(branch)
+        or branch in {"@", "-"}
+        or branch.startswith(("-", "/"))
+        or branch.endswith((".", "/"))
+        or any(item.startswith(".") or item.endswith(".lock") for item in components)
+        or ".." in branch
+        or "//" in branch
+        or "@{" in branch
+    ):
+        raise ConfigError(f"{context} must be a safe Git branch name")
+    return branch
+
+
+def _absolute_path(value: Any, context: str) -> str:
+    raw = _string(value, context)
+    path = Path(raw)
+    if not path.is_absolute() or path == Path("/"):
+        raise ConfigError(f"{context} must be an absolute non-root path")
+    return raw
+
+
+def _validate_host(host_id: str, raw: Any, *, require_testcode: bool) -> None:
     host = _mapping(raw, f"lab.hosts.{host_id}")
     transport = host.get("transport", "local")
     if transport not in {"local", "ssh"}:
@@ -88,6 +115,32 @@ def _validate_host(host_id: str, raw: Any) -> None:
         or host["max_parallel"] < 1
     ):
         raise ConfigError(f"lab.hosts.{host_id}.max_parallel must be positive")
+    testcode = host.get("testcode")
+    if require_testcode and testcode is None:
+        raise ConfigError(
+            f"lab.hosts.{host_id}.testcode is required when testcode.enabled is true"
+        )
+    if testcode is not None:
+        testcode = _mapping(testcode, f"lab.hosts.{host_id}.testcode")
+        checkout = Path(
+            _absolute_path(
+                testcode.get("checkout"),
+                f"lab.hosts.{host_id}.testcode.checkout",
+            )
+        )
+        venv = Path(
+            _absolute_path(
+                testcode.get("venv"),
+                f"lab.hosts.{host_id}.testcode.venv",
+            )
+        )
+        if checkout == venv or checkout.is_relative_to(venv) or venv.is_relative_to(checkout):
+            raise ConfigError(
+                f"lab.hosts.{host_id}.testcode.checkout and testcode.venv "
+                "must not overlap"
+            )
+        testcode.setdefault("python", "python3")
+        _string(testcode["python"], f"lab.hosts.{host_id}.testcode.python")
 
 
 def _validate_device(device_id: str, raw: Any, hosts: Mapping[str, Any]) -> None:
@@ -145,6 +198,24 @@ def validate_config(document: Mapping[str, Any]) -> dict[str, Any]:
         raise ConfigError(
             "controller.allowed_networks must not be empty when auth_mode is none"
         )
+
+    testcode = _mapping(raw.setdefault("testcode", {}), "testcode")
+    testcode.setdefault("enabled", False)
+    if not isinstance(testcode["enabled"], bool):
+        raise ConfigError("testcode.enabled must be true or false")
+    testcode.setdefault("repository", "johnny9/miner-testcode")
+    repository_name = _string(testcode["repository"], "testcode.repository")
+    if not _REPOSITORY.fullmatch(repository_name):
+        raise ConfigError("testcode.repository must have owner/name form")
+    testcode.setdefault("ref", "main")
+    testcode["ref"] = _git_branch(testcode["ref"], "testcode.ref")
+    install_timeout = testcode.setdefault("install_timeout", 300)
+    if (
+        isinstance(install_timeout, bool)
+        or not isinstance(install_timeout, (int, float))
+        or install_timeout <= 0
+    ):
+        raise ConfigError("testcode.install_timeout must be positive")
 
     qa = _mapping(raw.setdefault("qa_status", {}), "qa_status")
     qa.setdefault("enabled", False)
@@ -259,7 +330,7 @@ def validate_config(document: Mapping[str, Any]) -> dict[str, Any]:
     setups = _mapping(lab.setdefault("setups", {}), "lab.setups")
     for host_id, value in hosts.items():
         _identifier(host_id, f"lab.hosts.{host_id}")
-        _validate_host(host_id, value)
+        _validate_host(host_id, value, require_testcode=testcode["enabled"])
     for device_id, value in devices.items():
         _identifier(device_id, f"lab.devices.{device_id}")
         _validate_device(device_id, value, hosts)

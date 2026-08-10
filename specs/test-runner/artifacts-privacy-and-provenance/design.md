@@ -26,6 +26,8 @@
 
 - Values obtained through configured secret environment variables are
   registered for redaction and never copied into provenance.
+- Orchestration metadata may contain an expected testcode repository/ref/SHA;
+  the repository and SHA are execution constraints, not trusted observations.
 
 ### Python API
 
@@ -52,6 +54,8 @@
   structured payloads before persistence/publication.
 - Provenance distinguishes origin URL, exact HEAD SHA, working-tree state, and
   externally supplied commit claims.
+- When orchestration supplies expected testcode repository/SHA, independently
+  resolved source must match both before artifact allocation or device creation.
 - Artifact paths cannot escape the configured run root.
 
 ### Forbidden behavior
@@ -69,8 +73,8 @@ mapping is run-scoped so the same sensitive value has one consistent label.
 
 ## Control and data flow
 
-1. Collect source/runtime metadata and register sensitive values.
-2. Allocate run and per-test paths.
+1. Collect source/runtime metadata and verify orchestrated source constraints.
+2. Register sensitive values and allocate run/per-test paths.
 3. Sanitize evidence at capture boundaries.
 4. Finalize results/manifest and expose only sanitized publication inputs.
 
@@ -98,9 +102,10 @@ sample or roll up rather than grow without limit.
 | [State, telemetry, and charting](../state-telemetry-and-charting/SPEC.md) | Produces structured evidence requiring bounds and privacy. |
 | [Transport interfaces](../transport-interfaces/SPEC.md) | Emits privacy-safe traces. |
 | [Assignment execution](../../lab-orchestrator/assignment-execution/SPEC.md) | Supplies expected source/run metadata and consumes the result pointer. |
+| [Testcode bootstrap](../../lab-orchestrator/testcode-bootstrap/SPEC.md) | Supplies exact expected testcode repository/SHA for independent verification. |
 
 ## Verification approach
 
 Unit-test recursive redaction, stable labeling, safe paths, trace exclusions,
-and provenance mismatch behavior. Inspect representative finalized artifacts
-before accepting a schema or publication change.
+and pre-hardware provenance mismatch behavior. Inspect representative finalized
+artifacts before accepting a schema or publication change.

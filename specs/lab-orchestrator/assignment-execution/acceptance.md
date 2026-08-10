@@ -27,8 +27,9 @@
 
 ## Verification evidence
 
-- `tests.unit.test_orchestrator` covers local execution, metadata, pointer,
-  leases, and child publication linkage; reconciled 2026-08-10.
+- `tests.unit.test_orchestrator` covers local execution, optional installed
+  runner metadata/ordering, pointer, leases, and child publication linkage;
+  reconciled 2026-08-10.
 - Live local/SSH HIL was not run for this documentation iteration.
 
 ## Acceptance rule

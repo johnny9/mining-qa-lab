@@ -25,6 +25,7 @@
 - A new field bypasses recursive sanitization.
 - A secret appears inside an unexpected free-form error message.
 - Dirty or mismatched source is presented as the requested revision.
+- Orchestrator metadata is trusted without comparing it to the runner checkout.
 - An unsafe filename escapes or collides with another run.
 
 ## Security, privacy, and safety

@@ -4,10 +4,18 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from miner_testcode.config import ConfigError, load_config
-from miner_testcode.runner import _orchestration_metadata, build_parser
+from miner_testcode.provenance import ResolvedTestCode
+from miner_testcode.results import TestCodeRecord
+from miner_testcode.runner import (
+    _orchestration_metadata,
+    _verify_orchestrated_testcode,
+    build_parser,
+    execute,
+)
 
 
 class ConfigTest(unittest.TestCase):
@@ -17,6 +25,78 @@ class ConfigTest(unittest.TestCase):
             {"MINER_TEST_ORCHESTRATION_METADATA": '{"gate_run_id":"run-1"}'},
         ):
             self.assertEqual(_orchestration_metadata(), {"gate_run_id": "run-1"})
+
+    def test_verifies_orchestrated_testcode_before_execution(self) -> None:
+        resolved = ResolvedTestCode(
+            root=Path("/tmp/testcode"),
+            record=TestCodeRecord(
+                repository="owner/miner-testcode",
+                commit_sha="a" * 40,
+                url="https://github.com/owner/miner-testcode",
+            ),
+        )
+        expected = {
+            "testcode": {
+                "repository": "owner/miner-testcode",
+                "commit_sha": "a" * 40,
+            }
+        }
+        _verify_orchestrated_testcode(expected, resolved)
+        with self.assertRaisesRegex(ConfigError, "repository does not match"):
+            _verify_orchestrated_testcode(
+                {
+                    "testcode": {
+                        "repository": "other/miner-testcode",
+                        "commit_sha": "a" * 40,
+                    }
+                },
+                resolved,
+            )
+        with self.assertRaisesRegex(ConfigError, "commit does not match"):
+            _verify_orchestrated_testcode(
+                {
+                    "testcode": {
+                        "repository": "owner/miner-testcode",
+                        "commit_sha": "b" * 40,
+                    }
+                },
+                resolved,
+            )
+
+    def test_execute_rejects_testcode_mismatch_before_artifacts(self) -> None:
+        resolved = ResolvedTestCode(
+            root=Path("/tmp/testcode"),
+            record=TestCodeRecord(
+                repository="owner/miner-testcode",
+                commit_sha="a" * 40,
+                url="https://github.com/owner/miner-testcode",
+            ),
+        )
+        project = mock.Mock()
+        project.runner = SimpleNamespace(
+            validation_prs=frozenset(),
+            tests_dir=Path("/tmp/testcode/tests"),
+        )
+        project.selected_devices.return_value = [mock.Mock()]
+        project.publisher_settings.return_value = {"enabled": False}
+        mismatch = {
+            "testcode": {
+                "repository": "owner/miner-testcode",
+                "commit_sha": "b" * 40,
+            }
+        }
+        with (
+            mock.patch("miner_testcode.runner.load_config", return_value=project),
+            mock.patch(
+                "miner_testcode.runner._orchestration_metadata",
+                return_value=mismatch,
+            ),
+            mock.patch("miner_testcode.runner.resolve_test_code", return_value=resolved),
+            mock.patch("miner_testcode.runner.RunArtifacts.create") as create_artifacts,
+        ):
+            with self.assertRaisesRegex(ConfigError, "commit does not match"):
+                execute([])
+        create_artifacts.assert_not_called()
 
     def test_cli_can_select_validation_prs(self) -> None:
         self.assertEqual(build_parser().parse_args([]).validation_pr, [])

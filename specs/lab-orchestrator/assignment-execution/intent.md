@@ -19,21 +19,23 @@ device, run the wrong module/revision, expose credentials, or orphan evidence.
 
 ## Desired outcome
 
-After exclusive leases and optional exact deployment, the orchestrator launches
-one bounded `miner-test` process with the captured profile/module/device and
-provenance, then durably records its normalized status and child pointer.
+After exclusive leases, optional managed-testcode preparation, and optional
+exact deployment, the orchestrator launches one bounded `miner-test` process
+with the captured profile/module/device and provenance, then durably records
+its normalized status and child pointer.
 
 ## Primary flow
 
 Load the gate snapshot, acquire setup resources, create a unique job directory,
-ensure deployment, construct a minimal environment/command, execute with timeout,
-capture log and pointer, validate status/child identity, and finish the assignment.
+prepare the pinned worker testcode when enabled, ensure deployment, construct a
+minimal environment/command, execute with timeout, capture log and pointer,
+validate status/child identity, and finish the assignment.
 
 ## Alternate and failure flows
 
 - Lease conflict leaves work queued.
-- Disabled device, deployment error, timeout, malformed/missing pointer, SSH or
-  process failure becomes assignment error with bounded detail.
+- Disabled device, bootstrap/deployment error, timeout, malformed/missing
+  pointer, SSH, or process failure becomes assignment error with bounded detail.
 - Runner failure remains a failed/error child outcome, not an executor crash.
 
 ## Non-goals

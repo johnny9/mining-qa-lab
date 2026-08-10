@@ -6,6 +6,7 @@
 |---|---|---|
 | Assignment executor | Resolve snapshot/resources, deploy, invoke worker, ingest pointer | `src/miner_testcode/orchestrator/engine.py` |
 | Database | Select work, acquire/release leases, persist terminal result | `src/miner_testcode/orchestrator/database.py` |
+| Testcode installer | Optionally pin and prepare an exact worker checkout/venv | `src/miner_testcode/orchestrator/testcode.py` |
 | Firmware deployer | Establish optional gate-wide target firmware first | `src/miner_testcode/orchestrator/firmware.py` |
 | Runner | Own test lifecycle, evidence, cleanup, and detailed child publication | `src/miner_testcode/runner.py` |
 
@@ -15,13 +16,16 @@
 
 - Command is `miner-test --config PROFILE --pattern MODULE_PATTERN`, optionally
   repeated `--device NAME` and `--validation-pr NUMBER` as selected by snapshot.
-- Host transport may select a configured runner executable and working directory.
+- Host transport may select a configured runner executable and working
+  directory. Managed bootstrap instead supplies the executable and checkout.
 
 ### Configuration
 
 - Hosts define local/SSH transport and worker coordinates; setups define profile,
   devices/runner names, and optional working directory; modules define pattern,
   timeout, profile override, and PR validation behavior.
+- Root/host `testcode` policy can opt into an exact pinned installation before
+  deployment; relative profiles then resolve inside the managed checkout.
 
 ### Environment
 
@@ -50,6 +54,8 @@
 ### Required invariants
 
 - Execution begins only after atomically acquiring every setup device lease.
+- Enabled testcode preparation must succeed before firmware deployment or
+  runner construction, and its exact repository/SHA must enter runner metadata.
 - Captured gate configuration and exact commit, not current mutable config,
   define the command and provenance (controller connectivity may use current service config).
 - Environment contains only allowlisted values plus explicit runner contract values.
@@ -68,15 +74,17 @@
 ## Data and state
 
 Assignment metadata includes gate/assignment/module/platform/setup/attempt,
-trigger, gate publication identity, and deployment provenance. Pointer supplies
-bounded child status and publisher ID/URL.
+trigger, gate publication identity, deployment provenance, and optional exact
+testcode repository/ref/SHA. Pointer supplies bounded child status and publisher
+ID/URL.
 
 ## Control and data flow
 
 1. Load immutable run snapshot and acquire device resources.
-2. Allocate job paths and ensure optional firmware deployment.
-3. Invoke local/SSH runner with explicit command/environment and timeout.
-4. Save worker output, ingest pointer, finish assignment, link child if possible.
+2. Allocate job paths and prepare optional pinned testcode.
+3. Ensure optional firmware deployment.
+4. Invoke local/SSH runner with explicit command/environment and timeout.
+5. Save worker output, ingest pointer, finish assignment, link child if possible.
 
 ## Failure and recovery
 
@@ -100,10 +108,12 @@ Process/SSH/pointer waits, logs, and stored error details are bounded.
 |---|---|
 | [Persistence, leases, and recovery](../persistence-leases-and-recovery/SPEC.md) | Supplies exclusive resources and durable outcomes. |
 | [Artifact resolution and deployment](../artifact-resolution-and-deployment/SPEC.md) | Runs once before test execution when configured. |
+| [Testcode bootstrap](../testcode-bootstrap/SPEC.md) | Supplies an exact managed runner before deployment and execution. |
 | [Configuration and selection](../../test-runner/configuration-and-selection/SPEC.md) | Runner consumes selected profile/pattern/devices. |
 | [Result model and publishing](../../test-runner/result-model-and-publishing/SPEC.md) | Defines child-result pointer and publisher identity. |
 
 ## Verification approach
 
-Unit-test exact command/environment, quoting, local/SSH paths, lease conflicts,
-deployment failure, timeout, log/pointer handling, status normalization, and links.
+Unit-test exact command/environment, optional bootstrap ordering, quoting,
+local/SSH paths, lease conflicts, deployment failure, timeout, log/pointer
+handling, status normalization, and links.

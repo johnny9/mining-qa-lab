@@ -10,6 +10,8 @@
   by stable configured labels in publication data.
 - [x] **TR-EVIDENCE-AC-04:** Provenance records exact repository origin, HEAD,
   working-tree state, and supplied orchestration claims distinctly.
+- [x] **TR-EVIDENCE-AC-09:** An orchestrated expected testcode repository or
+  SHA mismatch is rejected before artifact allocation and device construction.
 
 ## Interfaces and compatibility
 
@@ -27,8 +29,9 @@
 ## Verification evidence
 
 - `tests.unit.test_redaction`, `tests.unit.test_provenance`,
-  `tests.unit.test_runner`, and API-interface tests cover the core
-  transformations and artifact handling; reconciled 2026-08-10.
+  `tests.unit.test_runner`, `tests.unit.test_config`, and API-interface tests
+  cover the core transformations, pre-hardware source guard, and artifact
+  handling; reconciled 2026-08-10.
 - A fresh full publication audit was not performed for this documentation
   iteration.
 

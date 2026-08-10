@@ -15,6 +15,7 @@ from miner_testcode.orchestrator.database import OrchestratorDatabase
 from miner_testcode.orchestrator.engine import OrchestratorEngine, Planner
 from miner_testcode.orchestrator.events import EventCollector, cron_matches, paths_match
 from miner_testcode.orchestrator.qa_status import GatePublisher
+from miner_testcode.orchestrator.testcode import TestcodeInstallation
 
 
 def configuration(root: Path) -> dict:
@@ -170,6 +171,55 @@ class ConfigStoreTest(unittest.TestCase):
                 validated["gates"]["firmware-smoke"]["deployment"]["method"],
                 "esp_miner_http_ota",
             )
+
+    def test_validates_opt_in_testcode_installation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            document = configuration(root)
+            document["testcode"] = {
+                "enabled": True,
+                "repository": "johnny9/miner-testcode",
+                "ref": "main",
+                "install_timeout": 120,
+            }
+            document["lab"]["hosts"]["local"]["testcode"] = {
+                "checkout": str(root / "testcode"),
+                "venv": str(root / "runner-venv"),
+            }
+            validated = validate_config(document)
+            self.assertTrue(validated["testcode"]["enabled"])
+            self.assertEqual(
+                validated["lab"]["hosts"]["local"]["testcode"]["python"],
+                "python3",
+            )
+
+            invalid = configuration(root)
+            invalid["testcode"] = {"enabled": True, "ref": "../main"}
+            with self.assertRaisesRegex(ConfigError, "safe Git branch"):
+                validate_config(invalid)
+
+            invalid = configuration(root)
+            invalid["testcode"] = {"enabled": True}
+            with self.assertRaisesRegex(ConfigError, "testcode is required"):
+                validate_config(invalid)
+
+            invalid = configuration(root)
+            invalid["testcode"] = {"enabled": True}
+            invalid["lab"]["hosts"]["local"]["testcode"] = {
+                "checkout": "relative/source",
+                "venv": str(root / "runner-venv"),
+            }
+            with self.assertRaisesRegex(ConfigError, "absolute non-root"):
+                validate_config(invalid)
+
+            invalid = configuration(root)
+            invalid["testcode"] = {"enabled": True}
+            invalid["lab"]["hosts"]["local"]["testcode"] = {
+                "checkout": str(root / "source"),
+                "venv": str(root / "source" / ".venv"),
+            }
+            with self.assertRaisesRegex(ConfigError, "must not overlap"):
+                validate_config(invalid)
 
 
 class SchedulingTest(unittest.TestCase):
@@ -422,6 +472,117 @@ pointer.write_text(json.dumps({
             )
             self.assertTrue(
                 all(Path(item["result_pointer"]).is_file() for item in completed["assignments"])
+            )
+            database.close()
+
+    def test_executes_installed_testcode_with_exact_metadata(self) -> None:
+        class Installer:
+            def __init__(self, installation):
+                self.installation = installation
+                self.calls = 0
+
+            def ensure(self, *args):
+                self.calls += 1
+                return self.installation
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            checkout = root / "managed-testcode"
+            checkout.mkdir()
+            venv = root / "runner-venv"
+            executable = venv / "bin" / "miner-test"
+            executable.parent.mkdir(parents=True)
+            executable.write_text(
+                """#!/usr/bin/env python3
+import json, os
+from pathlib import Path
+metadata = json.loads(os.environ["MINER_TEST_ORCHESTRATION_METADATA"])
+assert metadata["testcode"] == {
+    "repository": "johnny9/miner-testcode",
+    "ref": "main",
+    "commit_sha": "c" * 40,
+}
+pointer = Path(os.environ["MINER_TEST_RESULT_POINTER"])
+pointer.parent.mkdir(parents=True, exist_ok=True)
+pointer.write_text(json.dumps({"status": "passed", "publishers": []}))
+""",
+                encoding="utf-8",
+            )
+            executable.chmod(0o700)
+            (checkout / "runner.toml").write_text("", encoding="utf-8")
+            installation = TestcodeInstallation(
+                repository="johnny9/miner-testcode",
+                ref="main",
+                commit_sha="c" * 40,
+                checkout=checkout,
+                venv=venv,
+                executable=executable,
+                log="testcode installed\n",
+            )
+            installer = Installer(installation)
+            document = configuration(root)
+            document["testcode"] = {"enabled": True}
+            document["lab"]["hosts"]["local"]["testcode"] = {
+                "checkout": str(checkout),
+                "venv": str(venv),
+            }
+            path = root / "orchestrator.yaml"
+            path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            store = ConfigStore(path)
+            database = OrchestratorDatabase(root / "state.sqlite3")
+            engine = OrchestratorEngine(store, database)
+            engine.executor.testcode_installer = installer  # type: ignore[assignment]
+            run = engine.manual_run("firmware-smoke", "a" * 40, "main")
+            while engine.tick():
+                pass
+            completed = database.gate_run(run["id"])
+            log = Path(completed["assignments"][0]["result_pointer"]).with_name(
+                "worker.log"
+            )
+
+            self.assertEqual(completed["status"], "passed")
+            self.assertEqual(installer.calls, 2)
+            self.assertIn("testcode installed", log.read_text(encoding="utf-8"))
+            database.close()
+
+    def test_testcode_install_failure_prevents_firmware_and_runner(self) -> None:
+        class FailingInstaller:
+            def ensure(self, *args):
+                raise ConfigError("testcode install failed")
+
+        class ForbiddenDeployer:
+            def ensure(self, *args):
+                raise AssertionError("firmware deploy must not run")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            document = configuration(root)
+            document["testcode"] = {"enabled": True}
+            document["lab"]["hosts"]["local"]["testcode"] = {
+                "checkout": str(root / "managed-testcode"),
+                "venv": str(root / "runner-venv"),
+            }
+            path = root / "orchestrator.yaml"
+            path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            store = ConfigStore(path)
+            database = OrchestratorDatabase(root / "state.sqlite3")
+            engine = OrchestratorEngine(store, database)
+            engine.executor.testcode_installer = FailingInstaller()  # type: ignore[assignment]
+            engine.executor.firmware_deployer = ForbiddenDeployer()  # type: ignore[assignment]
+            run = engine.manual_run("firmware-smoke", "a" * 40, "main")
+            while engine.tick():
+                pass
+            completed = database.gate_run(run["id"])
+
+            self.assertEqual(completed["status"], "error")
+            self.assertEqual(
+                {item["status"] for item in completed["assignments"]}, {"error"}
+            )
+            self.assertTrue(
+                all(
+                    "testcode install failed" in item["detail"]
+                    for item in completed["assignments"]
+                )
             )
             database.close()
 

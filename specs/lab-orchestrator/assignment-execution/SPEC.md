@@ -13,5 +13,7 @@ environment, command, log, timeout, deployment, and child-result correlation.
 
 ## Changelog
 
+- 2026-08-10: Inserted optional exact testcode preparation before firmware
+  deployment and runner execution.
 - 2026-08-10: Defined resource acquisition, local/SSH worker command, environment
   allowlist, deployment ordering, bounded logs/timeouts, and pointer ingestion.

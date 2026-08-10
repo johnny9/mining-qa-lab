@@ -43,6 +43,8 @@ child results separately from aggregate gate status.
 - Deterministic gate planning, change filtering, setup matrices, supersession,
   SQLite WAL persistence, resource leases, retry, cancel, and recovery.
 - Exact successful-build artifact resolution and board-verified OTA.
+- Opt-in latest-branch testcode resolution, exact per-gate/host pinning, and
+  isolated local or SSH worker installation.
 - Local or SSH worker execution with bounded environment and child-result
   pointers.
 - Parent gate publication and immutable links to child results.
@@ -66,6 +68,8 @@ child results separately from aggregate gate status.
 - Lab inventory, setup compatibility, device resource leases, durable run and
   assignment state, and interrupted-run recovery.
 - Optional verified firmware deployment before a gate's test modules.
+- Resolving, pinning, and safely preparing the configured worker testcode when
+  installation is enabled.
 - Starting `miner-test`, collecting its result pointer, aggregating the gate,
   and publishing only parent status and child links.
 
@@ -94,7 +98,10 @@ flowchart LR
 ## Cross-system runner contract
 
 The orchestrator invokes `miner-test` with a runner profile, test pattern,
-optional selected devices, and optional PR validation number. It supplies:
+optional selected devices, and optional PR validation number. When managed
+testcode is enabled it also selects one exact repository/SHA per gate and host,
+installs it before execution, and requires the runner to independently verify
+that source before hardware construction. It supplies:
 
 - `MINER_TEST_ORCHESTRATION_METADATA`
 - `MINER_TEST_EXTERNAL_RUN_ID`
@@ -135,5 +142,7 @@ detailed result.
 
 ## Changelog
 
+- 2026-08-10: Added opt-in latest-testcode resolution with per-gate/host SHA
+  pinning, isolated worker installation, and runner-side provenance checks.
 - 2026-08-10: Established the test-runner/lab-orchestrator ownership boundary
   and cross-system child-result contract.

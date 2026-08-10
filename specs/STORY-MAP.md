@@ -56,6 +56,9 @@ complete feature directory.
   [Lab inventory and preflight](lab-orchestrator/lab-inventory-and-preflight/SPEC.md)
 - A gate can deploy the exact successful artifact to the expected board →
   [Artifact resolution and deployment](lab-orchestrator/artifact-resolution-and-deployment/SPEC.md)
+- A worker can install the latest approved testcode branch while retaining one
+  exact harness revision across a gate →
+  [Testcode bootstrap](lab-orchestrator/testcode-bootstrap/SPEC.md)
 - A compatible host can execute the correct test module locally or over SSH →
   [Assignment execution](lab-orchestrator/assignment-execution/SPEC.md)
 - Stakeholders can see one aggregate gate linked to detailed child evidence →

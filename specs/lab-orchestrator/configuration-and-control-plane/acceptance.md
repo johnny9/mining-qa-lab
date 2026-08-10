@@ -28,8 +28,8 @@
 ## Verification evidence
 
 - `tests.unit.test_orchestrator` and `tests.unit.test_orchestrator_web` cover
-  validation, mutation, backup, and conditional API behavior; reconciled
-  2026-08-10.
+  validation (including opt-in testcode policy), mutation, backup, and
+  conditional API behavior; reconciled 2026-08-10.
 - No production-host restore drill was run for this documentation iteration.
 
 ## Acceptance rule

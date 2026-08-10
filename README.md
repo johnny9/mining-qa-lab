@@ -482,8 +482,11 @@ The configuration separates public gate selectors from private lab coordinates:
 - `gates`: triggers, changed-path filters, module lists, setup matrices, and
   required-result policy. A gate may deploy one verified OTA artifact to named
   setup roles before any test module starts.
+- `testcode`: optional GitHub repository/branch policy for installing current
+  testcode before assignments. Existing configurations default to disabled.
 - `lab.hosts`: local or SSH execution coordinates. SSH execution explicitly
-  disables agent forwarding.
+  disables agent forwarding. When testcode installation is enabled, every host
+  also defines absolute managed checkout and isolated runner-venv paths.
 - `lab.devices`: names, adapter types, API addresses, stable USB identity,
   tags, and a local photo.
 - `lab.setups`: device roles, a stable platform key, runner TOML, and runner
@@ -496,6 +499,25 @@ An operator can list open PRs and approve one exact, freshly revalidated head
 SHA for one gate without adding its contributor to the trusted list. The
 resulting gate retains pull-request, contributor, branch, and commit metadata.
 Use `configs/orchestrator.example.yaml` as the complete schema example.
+
+With `testcode.enabled: true`, the first assignment for each gate and worker
+host resolves the configured branch head, records its exact commit under the
+orchestrator state directory, and prepares that same commit before every later
+assignment for that gate/host. A moving branch therefore cannot mix testcode
+revisions inside one gate. The worker keeps a managed Git checkout so
+`miner-test` can report source provenance, installs it editable into the
+host-specific runner venv, verifies the imported package path, and launches the
+venv's executable. Relative `runner_profile` paths resolve inside the managed
+checkout; private profiles may remain as ignored, untracked files there.
+
+The controller needs Git access to resolve the branch. Each local or SSH worker
+needs Git, the configured Python with venv support, and package-index access for
+the project's dependencies. Tracked changes, a wrong checkout origin, corrupt
+pin state, install/import failure, or runner repository/SHA mismatch fails the
+assignment before firmware deployment or hardware construction. The managed
+venv must differ from the active orchestrator service environment. This feature
+does not update or restart that service; disabling it restores the configured
+host `miner_test` behavior.
 
 On first observation, a branch or pull request is recorded as a baseline rather
 than unexpectedly running hardware. Later SHA changes create events. A newer PR

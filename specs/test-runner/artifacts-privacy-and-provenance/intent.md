@@ -33,7 +33,8 @@ sanitized paths/payloads to publishers.
 
 - A redaction/sanitization failure prevents remote publication.
 - Missing or inconsistent source provenance is visible and can fail strict
-  publication policy.
+  publication policy; an orchestrated expected repository/SHA mismatch fails
+  before hardware construction.
 - Artifact-write failures are reported as test infrastructure failures.
 
 ## Non-goals

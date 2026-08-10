@@ -18,6 +18,12 @@ qa_status:
   base_url: https://mining-qa-status.vercel.app
   token_env: MINING_QA_TOKEN
 
+testcode:
+  enabled: true
+  repository: johnny9/miner-testcode
+  ref: main
+  install_timeout: 300
+
 repositories:
   esp-miner:
     repository: bitaxeorg/ESP-Miner
@@ -58,6 +64,10 @@ lab:
     controller:
       transport: local
       miner_test: miner-test
+      testcode:
+        checkout: /var/lib/miner-testcode/source
+        venv: /var/lib/miner-testcode/runner-venv
+        python: python3
       max_parallel: 1
 
     remote-usb-lab:
@@ -66,6 +76,10 @@ lab:
       miner_test: /opt/miner-testcode/venv/bin/miner-test
       working_directory: /var/lib/miner-testcode
       work_root: /var/lib/miner-testcode/orchestrator
+      testcode:
+        checkout: /var/lib/miner-testcode/source
+        venv: /var/lib/miner-testcode/runner-venv
+        python: python3
       max_parallel: 1
 
   devices:

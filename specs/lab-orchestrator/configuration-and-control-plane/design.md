@@ -19,7 +19,9 @@
 ### Configuration
 
 - Root schema version is `1`; primary sections are controller, QA status,
-  repositories, test modules, gates, and lab hosts/devices/setups.
+  testcode, repositories, test modules, gates, and lab hosts/devices/setups.
+- Optional root testcode policy identifies a safe GitHub branch and timeout;
+  enabled policy requires absolute checkout/venv paths on every host.
 
 ### Environment
 
@@ -91,10 +93,12 @@ mutations are serialized by the store lock.
 |---|---|
 | [Gate planning and supersession](../gate-planning-and-supersession/SPEC.md) | Consumes validated snapshots and gate definitions. |
 | [Lab inventory and preflight](../lab-inventory-and-preflight/SPEC.md) | Owns inventory semantics represented by the schema. |
+| [Testcode bootstrap](../testcode-bootstrap/SPEC.md) | Consumes validated repository/ref/timeout policy and per-host managed paths. |
 | [Operator API and UI](../operator-api-and-ui/SPEC.md) | Exposes revision-checked control surfaces. |
 | [Configuration and selection](../../test-runner/configuration-and-selection/SPEC.md) | Runner profiles referenced by modules/setups remain a separate schema. |
 
 ## Verification approach
 
-Unit-test normalization, invalid cross-references, secret rejection, revision
-conflicts, backups, atomic replacement, and API conditional requests.
+Unit-test normalization, testcode path/ref constraints, invalid
+cross-references, secret rejection, revision conflicts, backups, atomic
+replacement, and API conditional requests.

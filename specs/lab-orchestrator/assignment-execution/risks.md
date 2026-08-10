@@ -12,7 +12,8 @@
 
 ## Assumptions
 
-- Runner executable/profile exists on the chosen host and honors its contracts.
+- A configured runner executable/profile exists on the chosen host, or enabled
+  managed-testcode preparation can create it, and it honors its contracts.
 - Remote job path is readable through the configured SSH identity.
 
 ## Open questions
@@ -22,6 +23,7 @@
 ## Failure modes
 
 - Wrong profile/device name targets unintended equipment.
+- Worker testcode preparation fails before deployment or hardware construction.
 - Quoting or environment encoding changes command meaning.
 - Runner cleans up but pointer retrieval fails, orphaning a child link.
 - Process interruption leaves uncertain physical state despite lease recovery.

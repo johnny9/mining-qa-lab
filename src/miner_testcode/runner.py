@@ -11,7 +11,7 @@ import unittest
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Mapping
 
 from .artifacts import RunArtifacts
 from .config import ConfigError, DeviceConfig, ProjectConfig, load_config
@@ -38,6 +38,31 @@ def _orchestration_metadata() -> dict[str, object] | None:
     if not isinstance(value, dict):
         raise ConfigError("MINER_TEST_ORCHESTRATION_METADATA must be a JSON object")
     return value
+
+
+def _verify_orchestrated_testcode(
+    metadata: Mapping[str, object] | None,
+    test_code: ResolvedTestCode,
+) -> None:
+    if metadata is None or "testcode" not in metadata:
+        return
+    expected = metadata["testcode"]
+    if not isinstance(expected, dict):
+        raise ConfigError("orchestration testcode metadata must be an object")
+    repository = expected.get("repository")
+    commit_sha = expected.get("commit_sha")
+    if not isinstance(repository, str) or not isinstance(commit_sha, str):
+        raise ConfigError(
+            "orchestration testcode metadata requires repository and commit_sha"
+        )
+    if repository != test_code.record.repository:
+        raise ConfigError(
+            "installed testcode repository does not match orchestration metadata"
+        )
+    if commit_sha.lower() != test_code.record.commit_sha.lower():
+        raise ConfigError(
+            "installed testcode commit does not match orchestration metadata"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -311,6 +336,7 @@ def build_parser() -> argparse.ArgumentParser:
 def execute(argv: list[str] | None = None) -> RunOutcome:
     args = build_parser().parse_args(argv)
     project = load_config(args.config)
+    orchestration = _orchestration_metadata()
     invalid_cli_prs = [number for number in args.validation_pr if number <= 0]
     if invalid_cli_prs:
         raise ConfigError("--validation-pr must be a positive integer")
@@ -327,6 +353,7 @@ def execute(argv: list[str] | None = None) -> RunOutcome:
     test_code = resolve_test_code(
         project.runner.tests_dir, require_published=remote_publication
     )
+    _verify_orchestrated_testcode(orchestration, test_code)
     artifacts = RunArtifacts.create(project.runner.artifacts_dir)
     started_at = time.time()
     _configure_logging(project, artifacts, devices, test_code.root)
@@ -408,7 +435,7 @@ def execute(argv: list[str] | None = None) -> RunOutcome:
         unexpected_successes=len(result.unexpectedSuccesses),
         successful=result.wasSuccessful(),
         test_code=test_code.record,
-        orchestration=_orchestration_metadata(),
+        orchestration=orchestration,
     )
     for handler in logging.getLogger().handlers:
         handler.flush()

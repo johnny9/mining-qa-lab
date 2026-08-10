@@ -16,6 +16,7 @@ from .database import OrchestratorDatabase
 from .events import EventCollector, paths_match
 from .firmware import FirmwareDeployer
 from .qa_status import GatePublisher
+from .testcode import TestcodeInstaller
 
 logger = logging.getLogger(__name__)
 
@@ -91,11 +92,13 @@ class AssignmentExecutor:
         config_store: ConfigStore,
         gate_publisher: GatePublisher,
         firmware_deployer: FirmwareDeployer | None = None,
+        testcode_installer: TestcodeInstaller | None = None,
     ) -> None:
         self.database = database
         self.config_store = config_store
         self.gate_publisher = gate_publisher
         self.firmware_deployer = firmware_deployer or FirmwareDeployer()
+        self.testcode_installer = testcode_installer or TestcodeInstaller()
 
     def _resources(self, assignment: Mapping[str, Any], config: Mapping[str, Any]) -> list[str]:
         setup = config["lab"]["setups"][assignment["setup_id"]]
@@ -162,7 +165,30 @@ class AssignmentExecutor:
         pointer = job_dir / "result-pointer.json"
         log_path = job_dir / "worker.log"
         profile = Path(module.get("runner_profile") or setup["runner_profile"])
-        if host["transport"] == "local" and not profile.is_absolute():
+
+        try:
+            installation = self.testcode_installer.ensure(
+                run,
+                host_id,
+                host,
+                config,
+                state_dir,
+            )
+        except (ConfigError, OSError) as exc:
+            log_path.write_text(
+                f"{type(exc).__name__}: {exc}\n",
+                encoding="utf-8",
+            )
+            self.database.finish_assignment(
+                assignment["id"],
+                status="error",
+                detail=str(exc)[:2000],
+            )
+            return
+
+        if installation is not None and not profile.is_absolute():
+            profile = installation.checkout / profile
+        elif host["transport"] == "local" and not profile.is_absolute():
             profile = (snapshot.source.parent / profile).resolve()
 
         try:
@@ -173,8 +199,9 @@ class AssignmentExecutor:
                 state_dir,
             )
         except ConfigError as exc:
+            prefix = installation.log if installation is not None else ""
             log_path.write_text(
-                f"{type(exc).__name__}: {exc}\n",
+                f"{prefix}{type(exc).__name__}: {exc}\n",
                 encoding="utf-8",
             )
             self.database.finish_assignment(
@@ -203,6 +230,8 @@ class AssignmentExecutor:
         }
         if deployment:
             metadata["firmware"] = deployment
+        if installation:
+            metadata["testcode"] = installation.metadata
         environment = self._safe_environment(config["controller"])
         result_pointer = pointer
         if host["transport"] == "ssh":
@@ -220,7 +249,11 @@ class AssignmentExecutor:
         )
         if run.get("pr_number"):
             environment["MINER_TEST_PR_NUMBER"] = str(run["pr_number"])
-        executable = str(host.get("miner_test") or "miner-test")
+        executable = str(
+            installation.executable
+            if installation is not None
+            else host.get("miner_test") or "miner-test"
+        )
         command = [executable, "--config", str(profile), "--pattern", module["pattern"]]
         runner_names = setup.get("runner_devices")
         if isinstance(runner_names, list):
@@ -229,7 +262,11 @@ class AssignmentExecutor:
         if run.get("pr_number") and module.get("validation_pr", True):
             command.extend(["--validation-pr", str(run["pr_number"])])
 
-        cwd = setup.get("working_directory") or host.get("working_directory")
+        cwd = (
+            setup.get("working_directory")
+            or host.get("working_directory")
+            or (str(installation.checkout) if installation is not None else None)
+        )
         timeout = float(module.get("timeout", gate.get("timeout", 3600)))
         try:
             if host["transport"] == "local":
@@ -270,7 +307,8 @@ class AssignmentExecutor:
                 )
                 if pointer_result.returncode == 0:
                     pointer.write_text(pointer_result.stdout, encoding="utf-8")
-            log_path.write_text(output, encoding="utf-8")
+            prefix = installation.log if installation is not None else ""
+            log_path.write_text(prefix + output, encoding="utf-8")
             pointer_payload = json.loads(pointer.read_text(encoding="utf-8")) if pointer.exists() else {}
             result_id, result_url = self._qa_result(pointer_payload)
             status = str(pointer_payload.get("status") or ("passed" if returncode == 0 else "error"))
@@ -292,7 +330,11 @@ class AssignmentExecutor:
                     result_id,
                 )
         except (OSError, subprocess.SubprocessError, json.JSONDecodeError, PublishError) as exc:
-            log_path.write_text(f"{type(exc).__name__}: {exc}\n", encoding="utf-8")
+            prefix = installation.log if installation is not None else ""
+            log_path.write_text(
+                f"{prefix}{type(exc).__name__}: {exc}\n",
+                encoding="utf-8",
+            )
             self.database.finish_assignment(
                 assignment["id"], status="error", detail=str(exc)[:2000]
             )
