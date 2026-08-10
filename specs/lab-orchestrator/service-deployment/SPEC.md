@@ -13,6 +13,8 @@ hardened systemd user service without losing configuration or durable state.
 
 ## Changelog
 
+- 2026-08-10: Split first-install and exact-SHA update agent workflows into
+  focused skills while retaining the general inspection and recovery skill.
 - 2026-08-10: Moved repository and service-release examples to
   `mining-qa-lab` while keeping managed runner paths under
   `mining-qa-testcode`.

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Create Mining QA Gate"
+  short_description: "Define and validate a new lab gate"
+  default_prompt: "Use $create-mining-qa-gate to define and validate a new orchestrator gate."

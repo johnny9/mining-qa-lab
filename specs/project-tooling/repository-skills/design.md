@@ -115,6 +115,8 @@ and must not contact services or mutate agent installation state.
 |---|---|
 | [Service deployment](../../lab-orchestrator/service-deployment/SPEC.md) | First repo-owned operational skill and its authoritative deployment contract. |
 | [Configuration and control plane](../../lab-orchestrator/configuration-and-control-plane/SPEC.md) | Skills must use validated public config interfaces rather than edit hidden state. |
+| [Lab inventory and preflight](../../lab-orchestrator/lab-inventory-and-preflight/SPEC.md) | Device onboarding separates validated inventory from authorized read-only preflight. |
+| [Gate planning and supersession](../../lab-orchestrator/gate-planning-and-supersession/SPEC.md) | Gate creation previews the deterministic matrix without scheduling work. |
 | [Persistence, leases, and recovery](../../lab-orchestrator/persistence-leases-and-recovery/SPEC.md) | Deployment skill preserves durable state and fail-closed recovery semantics. |
 
 ## Verification approach

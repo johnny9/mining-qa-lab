@@ -51,10 +51,16 @@ decision.
 Installable project skills live under `skills/` and are governed by
 [Repository skills](specs/project-tooling/repository-skills/SPEC.md).
 
-- For service inspection, installation, update, restart, rollback, or systemd
-  diagnosis, read
-  `skills/manage-lab-orchestrator-deployment/SKILL.md` and
+- For a first service install, read
+  `skills/setup-lab-orchestrator-service/SKILL.md`; for an existing service
+  update, read `skills/update-lab-orchestrator-deployment/SKILL.md`; and for
+  inspection, restart, rollback, or systemd diagnosis, read
+  `skills/manage-lab-orchestrator-deployment/SKILL.md`. All three use
   [Service deployment](specs/lab-orchestrator/service-deployment/SPEC.md).
+- For inventory onboarding, read `skills/add-mining-lab-device/SKILL.md` and
+  [Lab inventory and preflight](specs/lab-orchestrator/lab-inventory-and-preflight/SPEC.md).
+- For gate policy creation, read `skills/create-mining-qa-gate/SKILL.md` and
+  [Gate planning and supersession](specs/lab-orchestrator/gate-planning-and-supersession/SPEC.md).
 - Validate skills with `./scripts/validate-codex-skills`.
 - Inspect installation with `./scripts/manage-codex-skills status all` and
   install only when requested with `./scripts/manage-codex-skills install ...`.

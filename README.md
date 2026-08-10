@@ -165,17 +165,21 @@ rollback, read [Deploying the lab orchestrator](docs/ORCHESTRATOR_DEPLOYMENT.md)
 The example user unit is at
 [miner-orchestrator.service](skills/manage-lab-orchestrator-deployment/assets/miner-orchestrator.service).
 
-Agents should use the repository-owned deployment skill:
+Agents can install the repository-owned workflow skills individually or as a
+catalog. The catalog covers first service setup, service inspection and
+diagnosis, exact-SHA deployment updates, device onboarding, and gate creation:
 
 ```bash
 ./scripts/validate-codex-skills
-./scripts/manage-codex-skills status manage-lab-orchestrator-deployment
-./scripts/manage-codex-skills install manage-lab-orchestrator-deployment
+./scripts/manage-codex-skills list
+./scripts/manage-codex-skills status all
+./scripts/manage-codex-skills install all
 ```
 
 Installation creates a link back to this repository and refuses to replace an
-existing skill. A skill provides procedure, not permission to restart a
-service, change private configuration, deploy firmware, or run hardware tests.
+existing skill. Install only the named skills you want when `all` is broader
+than needed. A skill provides procedure, not permission to restart a service,
+change private configuration, probe a host, deploy firmware, or run hardware tests.
 
 ## Specifications and agent guidance
 

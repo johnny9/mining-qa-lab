@@ -49,8 +49,8 @@ invokes its CLI through the versioned
 - Manual project/source/device-type gate controls and an authenticated,
   hash-verified local artifact archive with per-attempt history.
 - Aggregate parent publication and immutable child-result links.
-- Exact-release systemd deployment, safe idle cutover, retained rollback, and a
-  repository-owned deployment skill.
+- Exact-release systemd deployment, safe idle cutover, retained rollback, and
+  repository-owned service, device-onboarding, and gate-creation skills.
 
 ## System context
 
@@ -107,6 +107,8 @@ detailed published child result.
 
 ## Changelog
 
+- 2026-08-10: Expanded repository-owned skills to cover first service setup,
+  exact-SHA updates, device onboarding, and gate creation.
 - 2026-08-10: Split the lab orchestrator from `mining-qa-testcode`, documented
   repository ownership, and established orchestration contract v1.
 - 2026-08-10: Added exact-release service deployment and repository-owned agent

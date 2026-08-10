@@ -13,6 +13,13 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[2]
 SKILL_NAME = "manage-lab-orchestrator-deployment"
 SKILL_ROOT = ROOT / "skills" / SKILL_NAME
+SKILL_NAMES = (
+    "add-mining-lab-device",
+    "create-mining-qa-gate",
+    SKILL_NAME,
+    "setup-lab-orchestrator-service",
+    "update-lab-orchestrator-deployment",
+)
 INSTALLER = ROOT / "scripts" / "manage-codex-skills"
 VALIDATOR = ROOT / "scripts" / "validate-codex-skills"
 
@@ -51,7 +58,7 @@ class SkillInstallerTest(unittest.TestCase):
             destination = agent_home / "skills" / SKILL_NAME
 
             self.assertEqual(listed.returncode, 0)
-            self.assertEqual(listed.stdout.strip(), SKILL_NAME)
+            self.assertEqual(listed.stdout.splitlines(), list(SKILL_NAMES))
             self.assertEqual(missing.returncode, 0)
             self.assertIn("missing", missing.stdout)
             self.assertEqual(installed.returncode, 0)
@@ -61,6 +68,24 @@ class SkillInstallerTest(unittest.TestCase):
             self.assertIn("already linked", repeated.stdout)
             self.assertEqual(status.returncode, 0)
             self.assertIn("linked", status.stdout)
+
+    def test_installs_every_catalog_skill_into_temporary_home(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            agent_home = Path(directory) / "agent-home"
+            installed = self.run_installer(agent_home, "install", "all")
+            status = self.run_installer(agent_home, "status", "all")
+
+            self.assertEqual(installed.returncode, 0, installed.stderr)
+            self.assertEqual(status.returncode, 0, status.stderr)
+            for skill_name in SKILL_NAMES:
+                with self.subTest(skill_name=skill_name):
+                    destination = agent_home / "skills" / skill_name
+                    self.assertTrue(destination.is_symlink())
+                    self.assertEqual(
+                        destination.resolve(),
+                        (ROOT / "skills" / skill_name).resolve(),
+                    )
+                    self.assertIn(f"linked    {skill_name}", status.stdout)
 
     def test_refuses_to_replace_unmanaged_destination(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -123,7 +148,8 @@ class SkillInstallerTest(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn(f"OK   {SKILL_NAME}", result.stdout)
+        for skill_name in SKILL_NAMES:
+            self.assertIn(f"OK   {skill_name}", result.stdout)
 
 
 class DeploymentInspectorTest(unittest.TestCase):

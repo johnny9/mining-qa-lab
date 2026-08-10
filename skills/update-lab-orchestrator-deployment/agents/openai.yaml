@@ -1,0 +1,4 @@
+interface:
+  display_name: "Update Lab Orchestrator Deployment"
+  short_description: "Prepare and verify an exact-SHA service update"
+  default_prompt: "Use $update-lab-orchestrator-deployment to prepare and safely activate an exact-SHA service update."

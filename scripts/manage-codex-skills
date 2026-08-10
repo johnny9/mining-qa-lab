@@ -5,7 +5,11 @@ readonly SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd 
 readonly REPO_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd -P)"
 readonly SKILLS_ROOT="$REPO_ROOT/skills"
 readonly -a AVAILABLE_SKILLS=(
+    add-mining-lab-device
+    create-mining-qa-gate
     manage-lab-orchestrator-deployment
+    setup-lab-orchestrator-service
+    update-lab-orchestrator-deployment
 )
 
 usage() {

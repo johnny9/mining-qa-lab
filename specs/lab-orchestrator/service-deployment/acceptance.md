@@ -2,7 +2,7 @@
 
 ## Functional behavior
 
-- [x] **ORCH-SERVICE-AC-01:** The human runbook and agent skill explain initial
+- [x] **ORCH-SERVICE-AC-01:** The human runbook and focused agent skills explain initial
   installation, inspection, exact-SHA update, verification, rollback, and
   troubleshooting using one consistent release layout.
 - [x] **ORCH-SERVICE-AC-02:** The example systemd user unit validates config before
@@ -38,12 +38,13 @@
 
 ## Verification evidence
 
-- 2026-08-10: The standalone lab's 48-test unit suite passed, including
-  temporary-home installer conflicts, bounded inspector behavior, shared
-  safety wording, systemd template invariants, and specification integrity.
-- 2026-08-10: Repository skill validation, the standard skill quick validator,
-  shell syntax for both documented command sets, `systemd-analyze verify`,
-  wheel/sdist build, and `git diff --check` passed.
+- 2026-08-10: The standalone lab's 57-test unit suite passed with eight optional
+  web-extra tests skipped, including temporary-home catalog installation,
+  installer conflicts, bounded inspector behavior, shared safety wording,
+  systemd template invariants, and specification integrity.
+- 2026-08-10: All five repository skills passed repository and standard quick
+  validation. Shell/Python syntax, `systemd-analyze verify`, wheel/sdist build,
+  privacy scanning, and `git diff --check` passed.
 - No live service mutation, install, update, rollback, or HIL was performed;
   ORCH-SERVICE-AC-10 remains outstanding and host-specific.
 

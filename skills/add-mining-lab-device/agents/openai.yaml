@@ -1,0 +1,4 @@
+interface:
+  display_name: "Add Mining Lab Device"
+  short_description: "Safely add and preflight a lab device"
+  default_prompt: "Use $add-mining-lab-device to add a new device and setup to the private lab configuration."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Setup Lab Orchestrator Service"
+  short_description: "Set up the orchestrator systemd user service"
+  default_prompt: "Use $setup-lab-orchestrator-service to prepare and verify an initial local service deployment."

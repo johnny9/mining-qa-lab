@@ -30,12 +30,14 @@
 
 ## Verification evidence
 
-- 2026-08-10: The standalone lab's 48-test unit suite passed, including temporary
-  `CODEX_HOME` list/status/install/idempotence, unmanaged/foreign/broken-link
-  refusal, and repository validation tests.
-- 2026-08-10: The repository validator, standard skill quick validator, Python
-  and shell syntax checks, specification integrity, wheel/sdist build, privacy
-  scan, and `git diff --check` passed.
+- 2026-08-10: The catalog contains focused service setup, deployment management,
+  exact-SHA update, device-onboarding, and gate-creation skills.
+- 2026-08-10: All five skills passed the repository validator and the standard
+  quick validator. The 57-test unit suite passed with eight optional web-extra
+  tests skipped; this includes temporary-home install-all, individual install,
+  idempotence, unmanaged/foreign/broken-link refusal, and catalog validation.
+- 2026-08-10: Specification integrity, Python and shell syntax, wheel/sdist
+  build, systemd unit verification, privacy scan, and `git diff --check` passed.
 - Installation into the real agent home was not requested or performed; the
   evidence uses only temporary installation targets.
 
