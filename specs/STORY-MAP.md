@@ -27,6 +27,8 @@ feature directory.
   gate → [Testcode bootstrap](lab-orchestrator/testcode-bootstrap/SPEC.md)
 - Run the selected module locally or over SSH and consume its bounded pointer →
   [Assignment execution](lab-orchestrator/assignment-execution/SPEC.md)
+- Archive and inspect hash-verified child logs locally while retaining remote
+  publication → [Assignment execution](lab-orchestrator/assignment-execution/SPEC.md)
 - Publish one aggregate gate linked to external detailed child evidence →
   [Parent gate publication](lab-orchestrator/parent-gate-publication/SPEC.md)
 
@@ -38,6 +40,8 @@ the separate
 
 - Use REST or focused pages without exposing an unsafe mutation surface →
   [Operator API and UI](lab-orchestrator/operator-api-and-ui/SPEC.md)
+- Queue a project/source gate for selected device types and inspect its private
+  archive → [Operator API and UI](lab-orchestrator/operator-api-and-ui/SPEC.md)
 - Install, inspect, update, and roll back without mixing code, private state, or
   worker environments →
   [Service deployment](lab-orchestrator/service-deployment/SPEC.md)

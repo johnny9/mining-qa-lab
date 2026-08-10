@@ -13,5 +13,7 @@ and supersede stale queued PR work without disturbing running hardware work.
 
 ## Changelog
 
+- 2026-08-10: Allowed authorized manual requests to narrow the configured setup
+  matrix by validated device type without altering the captured gate policy.
 - 2026-08-10: Defined event eligibility, immutable snapshots/digests, matrix
   construction, required policy, idempotency, and queued-PR supersession.

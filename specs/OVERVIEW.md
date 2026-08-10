@@ -11,7 +11,7 @@ and result provenance.
 
 | Project | Owns | Does not own |
 |---|---|---|
-| [`mining-qa-lab`](https://github.com/johnny9/mining-qa-lab) | event trust, gates, lab inventory, leases, firmware deployment, runner installation/execution, parent results | test cases, device cleanup, detailed evidence |
+| [`mining-qa-lab`](https://github.com/johnny9/mining-qa-lab) | event trust, gates, lab inventory, leases, firmware deployment, runner installation/execution, private artifact redundancy, parent results | test cases, device cleanup, detailed evidence publication |
 | [`mining-qa-testcode`](https://github.com/johnny9/mining-qa-testcode) | test selection, device adapters/lifecycle, cleanup, detailed evidence, privacy, child results | repository event trust, lab scheduling, shared leases |
 | [`mining-qa-status`](https://github.com/johnny9/mining-qa-status) | external collection, presentation, GitHub integration, stored parent/child results | lab credentials, device control, test execution |
 
@@ -46,6 +46,8 @@ invokes its CLI through the versioned
   pin, isolated worker installation, and independent runner provenance checks.
 - Local/SSH assignment execution with bounded environment, logs, timeout, and
   result pointers.
+- Manual project/source/device-type gate controls and an authenticated,
+  hash-verified local artifact archive with per-attempt history.
 - Aggregate parent publication and immutable child-result links.
 - Exact-release systemd deployment, safe idle cutover, retained rollback, and a
   repository-owned deployment skill.
@@ -60,7 +62,7 @@ flowchart LR
     L -->|"optional verified OTA"| D["Mining device"]
     T -->|"test and guaranteed cleanup"| D
     T -->|"detailed child result"| Q["mining-qa-status"]
-    T -->|"v1 result pointer"| L
+    T -->|"v1 result pointer and artifact manifest"| L
     L -->|"parent gate and child links"| Q
 ```
 
@@ -72,9 +74,11 @@ identity, one external run ID, and a result-pointer path. Managed testcode also
 receives the expected testcode repository/ref/SHA and must reject a mismatch
 before hardware construction.
 
-The runner atomically writes a bounded versioned pointer. The lab validates it,
-uses its status for gate aggregation, and records a returned child URL/ID. The
-lab never reads child artifacts to recreate detailed results.
+The runner atomically writes a bounded versioned pointer and optional bounded
+artifact manifest. The lab validates it, uses its status for gate aggregation,
+records a returned child URL/ID, and privately archives only hash-verified
+manifest entries. It never uses archived artifacts to recreate or replace a
+detailed published child result.
 
 ## Cross-cutting constraints
 
@@ -108,3 +112,5 @@ lab never reads child artifacts to recreate detailed results.
 - 2026-08-10: Added exact-release service deployment and repository-owned agent
   skills.
 - 2026-08-10: Added exact per-gate/host testcode resolution and installation.
+- 2026-08-10: Added manual source/device targeting and private local artifact
+  redundancy while preserving Mining QA child and parent publication.

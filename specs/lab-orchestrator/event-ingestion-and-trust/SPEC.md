@@ -13,5 +13,7 @@ into idempotent durable source events.
 
 ## Changelog
 
+- 2026-08-10: Added manual project/source/device-type provenance and automatic
+  exact-head resolution from configured `main`, then `master`.
 - 2026-08-10: Defined source cursors, first-poll baseline, trusted contributor
   policy, exact PR-head approval, schedule identity, and bounded collection.

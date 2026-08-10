@@ -35,8 +35,9 @@
 
 - `/api/v1/health`; config JSON/YAML, validate/reload/revisions; CRUD for
   repositories/modules/gates/hosts/devices/setups; gate validation/manual run;
-  PR list/exact-head approval; events/runs/assignments; host/device/USB/photo/
-  setup preflight. Mutations require authorization; config edits require ETag.
+  PR list/exact-head approval; events/runs/assignments; per-run artifact list,
+  UTF-8 view, and download; host/device/USB/photo/setup preflight. Mutations
+  require authorization; config edits require ETag.
 
 ### Files, artifacts, payloads, and persistent state
 
@@ -52,6 +53,11 @@
   no-auth config is valid only with explicit allowed networks.
 - Configuration mutations require `If-Match` and full validation.
 - Exact PR approval verifies repository/gate relationship and expected full SHA.
+- Manual gates validate the project/gate relationship and selected device types.
+  A blank source resolves configured `main`, then `master`, to an exact SHA at
+  submission; explicit commits remain exact identities.
+- Artifact APIs serve only persisted archive records whose resolved paths remain
+  below `state_dir/archive`; inline viewing is UTF-8 and limited to 1 MiB.
 - List limits, request/photo bodies, probe output, subprocesses, and network
   calls are bounded.
 - UI is a view/client of server domain state, not a second policy implementation.
@@ -105,3 +111,5 @@ and background execution are bounded. Service is intended for a restricted lab.
 
 Use ASGI tests for auth/network, ETags, schemas/routes, CRUD, exact approval,
 history/actions, probes/photos/preflight, page separation, and OpenAPI visibility.
+Also cover manual source/device selection and authenticated artifact isolation,
+view bounds, binary rejection, and downloads.

@@ -15,7 +15,7 @@ from urllib.request import Request as UrlRequest, urlopen
 
 import yaml
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from .errors import ConfigError
 from .config import ConfigSnapshot, ConfigStore
@@ -359,9 +359,35 @@ def create_app(
     @app.post("/api/v1/gates/{gate_id}/run", dependencies=[Depends(authorize)])
     async def manual_gate(gate_id: str, request: Request) -> dict[str, Any]:
         body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=422, detail="body must be an object")
+        commit_sha = body.get("commit_sha")
+        branch = body.get("branch")
+        repository_id = body.get("repository_id")
+        device_types = body.get("device_types")
+        if commit_sha is not None and not isinstance(commit_sha, str):
+            raise HTTPException(status_code=422, detail="commit_sha must be a string")
+        if branch is not None and not isinstance(branch, str):
+            raise HTTPException(status_code=422, detail="branch must be a string")
+        if repository_id is not None and not isinstance(repository_id, str):
+            raise HTTPException(status_code=422, detail="repository_id must be a string")
+        if device_types is not None and (
+            not isinstance(device_types, list)
+            or not all(isinstance(item, str) for item in device_types)
+        ):
+            raise HTTPException(
+                status_code=422, detail="device_types must be a list of strings"
+            )
         try:
-            return engine.manual_run(gate_id, body["commit_sha"], body.get("branch"))
-        except (ConfigError, KeyError) as exc:
+            return await asyncio.to_thread(
+                engine.manual_run,
+                gate_id,
+                commit_sha,
+                branch or None,
+                repository_id=repository_id,
+                device_types=device_types,
+            )
+        except ConfigError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/api/v1/repositories/{repository_id}/pull-requests")
@@ -422,6 +448,79 @@ def create_app(
             return database.gate_run(run_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="gate run not found") from exc
+
+    @app.get(
+        "/api/v1/gate-runs/{run_id}/artifacts",
+        dependencies=[Depends(authorize)],
+    )
+    async def gate_run_artifacts(run_id: str) -> dict[str, Any]:
+        try:
+            database.gate_run(run_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="gate run not found") from exc
+        artifacts = database.assignment_artifacts(run_id=run_id)
+        return {
+            "run_id": run_id,
+            "artifacts": [
+                {key: value for key, value in artifact.items() if key != "storage_path"}
+                for artifact in artifacts
+            ],
+        }
+
+    @app.get(
+        "/api/v1/gate-runs/{run_id}/artifacts/{artifact_id}",
+        dependencies=[Depends(authorize)],
+    )
+    async def view_gate_run_artifact(run_id: str, artifact_id: str) -> dict[str, Any]:
+        try:
+            artifact = database.assignment_artifact(run_id, artifact_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="artifact not found") from exc
+        archive_root = (_state_dir(store) / "archive").resolve()
+        path = Path(artifact["storage_path"]).resolve()
+        if not path.is_relative_to(archive_root):
+            raise HTTPException(status_code=404, detail="artifact not found")
+        if not path.is_file():
+            raise HTTPException(status_code=410, detail="archived artifact is missing")
+        with path.open("rb") as stream:
+            encoded = stream.read(1024 * 1024 + 1)
+        if b"\x00" in encoded:
+            raise HTTPException(
+                status_code=415,
+                detail="binary artifact must be downloaded instead of viewed",
+            )
+        truncated = len(encoded) > 1024 * 1024
+        content = encoded[: 1024 * 1024].decode("utf-8", errors="replace")
+        return {
+            "id": artifact["id"],
+            "path": artifact["relative_path"],
+            "media_type": artifact["media_type"],
+            "size_bytes": artifact["size_bytes"],
+            "sha256": artifact["sha256"],
+            "truncated": truncated,
+            "content": content,
+        }
+
+    @app.get(
+        "/api/v1/gate-runs/{run_id}/artifacts/{artifact_id}/download",
+        dependencies=[Depends(authorize)],
+    )
+    async def download_gate_run_artifact(run_id: str, artifact_id: str) -> FileResponse:
+        try:
+            artifact = database.assignment_artifact(run_id, artifact_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="artifact not found") from exc
+        archive_root = (_state_dir(store) / "archive").resolve()
+        path = Path(artifact["storage_path"]).resolve()
+        if not path.is_relative_to(archive_root):
+            raise HTTPException(status_code=404, detail="artifact not found")
+        if not path.is_file():
+            raise HTTPException(status_code=410, detail="archived artifact is missing")
+        return FileResponse(
+            path,
+            media_type=artifact["media_type"],
+            filename=Path(artifact["relative_path"]).name,
+        )
 
     @app.post("/api/v1/gate-runs/{run_id}/cancel", dependencies=[Depends(authorize)])
     async def cancel_gate_run(run_id: str) -> dict[str, Any]:

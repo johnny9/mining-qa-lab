@@ -5,6 +5,7 @@
 | Component | Responsibility | Implementation pointer |
 |---|---|---|
 | Assignment executor | Resolve snapshot/resources, deploy, invoke worker, ingest pointer | `src/mining_qa_lab/engine.py` |
+| Artifact archiver | Validate the manifest and copy local/SSH artifacts into private attempt storage | `src/mining_qa_lab/archive.py` |
 | Database | Select work, acquire/release leases, persist terminal result | `src/mining_qa_lab/database.py` |
 | Testcode installer | Optionally pin and prepare an exact worker checkout/venv | `src/mining_qa_lab/testcode.py` |
 | Firmware deployer | Establish optional gate-wide target firmware first | `src/mining_qa_lab/firmware.py` |
@@ -48,6 +49,9 @@
 
 - Each assignment gets `state_dir/jobs/<gate>/<assignment>/worker.log` and
   `result-pointer.json`. Logs/details and pointer reads are bounded/validated.
+- Manifest-listed artifacts are copied into
+  `state_dir/archive/<gate>/<assignment>/attempt-N` only after path, size, and
+  SHA-256 verification; metadata is stored in SQLite.
 - Metadata and result-pointer fields follow
   [orchestration contract v1](../../../contracts/orchestration-v1.md).
 
@@ -65,13 +69,19 @@
 - Runner owns detailed tests, restoration, and child publication; executor owns
   scheduling, process boundary, pointer ingestion, and durable assignment state.
 - Status outside `passed`, `failed`, `error`, `skipped` is normalized to error.
+- A missing manifest remains valid for legacy v1 pointers. A provided invalid,
+  unsafe, oversized, missing, or hash-mismatched manifest/artifact fails the
+  assignment. SSH artifact reads disable forwarding and are byte-bounded.
+- When Mining QA Status is enabled, a successful child must provide its
+  published child identity; the private archive cannot substitute for it.
 
 ### Forbidden behavior
 
 - Do not execute on a disabled device or without all leases.
 - Do not inherit arbitrary service environment or forward SSH agent credentials.
 - Do not infer success solely from process exit when a valid pointer says otherwise.
-- Do not duplicate hardware cleanup or detailed artifact upload in orchestrator.
+- Do not duplicate hardware cleanup or republish detailed artifacts from the
+  orchestrator.
 
 ## Data and state
 
@@ -86,7 +96,8 @@ ID/URL.
 2. Allocate job paths and prepare optional pinned testcode.
 3. Ensure optional firmware deployment.
 4. Invoke local/SSH runner with explicit command/environment and timeout.
-5. Save worker output, ingest pointer, finish assignment, link child if possible.
+5. Save worker output, ingest pointer, archive and record verified artifacts.
+6. Finish the assignment and link the required published child.
 
 ## Failure and recovery
 

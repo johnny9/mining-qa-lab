@@ -17,6 +17,9 @@
   changed-path policy all constrain eligibility.
 - [x] **ORCH-PLAN-AC-06:** A partial matrix is never externally visible after a
   failed creation transaction.
+- [x] **ORCH-PLAN-AC-09:** Manual device-type selections deterministically
+  narrow setup assignments; omitted selection means all target types and empty
+  or unknown selections fail before planning.
 
 ## Quality attributes
 

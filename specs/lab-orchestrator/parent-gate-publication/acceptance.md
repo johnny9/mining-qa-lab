@@ -17,6 +17,9 @@
   publishes only aggregation/link data, never child artifacts.
 - [x] **ORCH-PUBLISH-AC-06:** Tokens, private device coordinates, and detailed
   runner evidence are absent from parent payloads.
+- [x] **ORCH-PUBLISH-AC-09:** Manual parent request provenance contains project,
+  selected device types, and source-resolution mode, while local archives remain
+  private and cannot replace child/parent publication.
 
 ## Quality attributes
 

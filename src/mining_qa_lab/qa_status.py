@@ -80,6 +80,9 @@ class GatePublisher:
                 "request": {
                     "requested_by": gate_run.get("requested_by"),
                     "authorization_source": authorization_source,
+                    "repository_id": gate_run.get("repository_id"),
+                    "device_types": event_payload.get("device_types", []),
+                    "source_resolution": event_payload.get("source_resolution"),
                 },
                 "assignments": [
                     {

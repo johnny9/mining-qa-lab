@@ -22,6 +22,11 @@
 
 ## Failure modes
 
+- A compromised worker supplies traversal, symlink, oversized, or hash-mismatched
+  manifest entries.
+- Retained logs exhaust controller disk without external capacity/retention
+  operations.
+
 - Wrong profile/device name targets unintended equipment.
 - Worker testcode preparation fails before deployment or hardware construction.
 - Quoting or environment encoding changes command meaning.

@@ -46,6 +46,9 @@
 - An event/gate definition produces at most one run under the database
   idempotency key.
 - Assignment matrix order/content is deterministic from the captured snapshot.
+- A manual event with selected device types includes only target setups that
+  contain at least one selected type. Empty and unknown selections are rejected;
+  omitted selection means every configured target type.
 - Platform key is configured or derived consistently from setup device types.
 - Supersession affects only eligible stale queued PR runs, never running or
   completed runs.
@@ -65,9 +68,10 @@ queued with immutable source/policy fields; later status belongs to execution.
 ## Control and data flow
 
 1. Load unplanned events and validated current configuration.
-2. Filter gates and expand the target matrix.
-3. Create run/assignments transactionally using snapshot and digest.
-4. Mark event planned and supersede applicable stale queued PR runs.
+2. Filter gates and, for manual work, target setups by selected device types.
+3. Expand the target matrix.
+4. Create run/assignments transactionally using snapshot and digest.
+5. Mark event planned and supersede applicable stale queued PR runs.
 
 ## Failure and recovery
 

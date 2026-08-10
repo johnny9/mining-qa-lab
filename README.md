@@ -34,9 +34,15 @@ the lab orchestrator publishes only parent gate state and child-result links.
 - executes workers locally or over SSH with agent forwarding disabled and an
   allowlisted environment;
 - provides a bounded REST API, local operator UI, health endpoint, worker logs,
-  and result-pointer records;
+  result-pointer records, and a private hash-verified artifact archive;
 - publishes aggregate gate results and immutable links to detailed child
   results.
+
+The **Run gates** page can queue a configured gate for a selected project and
+one or more device types. A blank commit resolves the newest configured `main`
+branch, then `master`; operators may instead select a configured branch or enter
+an exact commit. This convenience does not weaken the exact-SHA execution and
+durable-event contracts.
 
 ## Install for development
 
@@ -134,9 +140,23 @@ Durable data belongs under `controller.state_dir`:
 orchestrator.sqlite3              runs, assignments, events, leases, cursors
 jobs/GATE/ASSIGNMENT/worker.log   bounded private worker output
 jobs/GATE/ASSIGNMENT/result-pointer.json
+archive/GATE/ASSIGNMENT/attempt-N/...  hash-verified runner artifacts
 testcode/GATE/HOST.json           exact testcode pin
 api-token                         local bearer token when enabled
 ```
+
+Authenticated run-history pages list and view UTF-8 archived artifacts and can
+download any archived file. The archive copies only files named by testcode's
+bounded orchestration manifest, verifies every size and SHA-256, and keeps
+attempts separate. Treat it as private lab data and provision/monitor retention
+and disk capacity outside the service.
+
+Local archival is redundancy, not a publication fallback. In production,
+enable `qa_status`: testcode still publishes every detailed child result and the
+orchestrator still publishes the aggregate parent and child links. When that
+integration is enabled, a successful runner pointer without its Mining QA child
+identity is recorded as an assignment error rather than accepted from the local
+archive alone.
 
 ## Deploy as a service
 

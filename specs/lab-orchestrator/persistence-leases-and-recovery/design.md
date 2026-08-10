@@ -36,7 +36,9 @@
 ### Files, artifacts, payloads, and persistent state
 
 - SQLite persists source cursors, events, gate runs, assignments, and resource
-  leases. WAL/foreign-key behavior and migrations are initialized on open.
+  leases plus archived artifact path/size/hash/media metadata. Immutable archive
+  files live below `state_dir/archive` by assignment and attempt. WAL/foreign-key
+  behavior and migrations are initialized on open.
 
 ## Contract constraints
 
@@ -48,6 +50,8 @@
 - Terminal assignment transition releases its leases.
 - Startup recovery never reports interrupted running work as passed or queued.
 - Retry is explicit and preserves the prior attempt/history context.
+- Artifact rows and archive directories remain attempt-specific; retry never
+  overwrites a prior attempt's retained evidence.
 
 ### Forbidden behavior
 

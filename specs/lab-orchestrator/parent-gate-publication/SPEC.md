@@ -13,5 +13,7 @@ immutable child-result links without duplicating detailed test artifacts.
 
 ## Changelog
 
+- 2026-08-10: Clarified that the private lab archive is additive redundancy and
+  never replaces detailed child publication or parent/link publication.
 - 2026-08-10: Defined parent ownership, aggregate status policy, request
   provenance, child linking, idempotent external identity, and failure semantics.

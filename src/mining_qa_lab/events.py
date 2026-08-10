@@ -528,6 +528,8 @@ class EventCollector:
         commit_sha: str,
         branch: str | None,
         gate_id: str,
+        device_types: list[str] | None = None,
+        source_resolution: str = "explicit_commit",
     ) -> dict[str, Any]:
         event, _ = self.database.create_event(
             event_key=f"manual:{gate_id}:{commit_sha}:{time.time_ns()}",
@@ -535,6 +537,10 @@ class EventCollector:
             trigger_type="manual",
             commit_sha=commit_sha,
             branch=branch,
-            payload={"gate_id": gate_id},
+            payload={
+                "gate_id": gate_id,
+                "device_types": list(device_types or []),
+                "source_resolution": source_resolution,
+            },
         )
         return event

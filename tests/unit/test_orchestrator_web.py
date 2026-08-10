@@ -10,6 +10,7 @@ import yaml
 from mining_qa_lab.config import ConfigStore
 from mining_qa_lab.database import OrchestratorDatabase
 from mining_qa_lab.engine import OrchestratorEngine
+from mining_qa_lab.errors import ConfigError
 from test_orchestrator import configuration
 
 try:
@@ -59,6 +60,9 @@ class OrchestratorApiTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(config.headers["etag"], self.store.snapshot.etag)
         self.assertIn("/api/v1/gates/{resource_id}", schema.json()["paths"])
         self.assertIn("/api/v1/lab/devices/{device_id}/photo", schema.json()["paths"])
+        self.assertIn(
+            "/api/v1/gate-runs/{run_id}/artifacts", schema.json()["paths"]
+        )
 
     async def test_resource_mutation_requires_token_and_current_etag(self) -> None:
         current = await self.client.get("/api/v1/config")
@@ -117,7 +121,7 @@ class OrchestratorApiTest(unittest.IsolatedAsyncioTestCase):
             "/": "Lab overview",
             "/gates": "Gate setup",
             "/lab": "Lab and devices",
-            "/trigger": "Run an untrusted PR",
+            "/trigger": "Run gates",
             "/config": "Advanced configuration",
         }
         for path, title in pages.items():
@@ -133,7 +137,102 @@ class OrchestratorApiTest(unittest.IsolatedAsyncioTestCase):
         trigger = await self.client.get("/trigger")
         self.assertIn('data-kind="gate"', gates.text)
         self.assertIn('data-kind="device"', lab.text)
+        self.assertIn('class="manual-run-form"', trigger.text)
+        self.assertIn("'manual_device_types'", trigger.text)
         self.assertIn('data-action="approve-pr"', trigger.text)
+
+    async def test_manual_gate_defaults_to_latest_main_or_master_and_device_types(self) -> None:
+        document = self.store.snapshot.document
+        updated = yaml.safe_load(yaml.safe_dump(document))
+        updated["lab"]["devices"]["gamma"] = {
+            "name": "Gamma",
+            "type": "bitaxe_602",
+            "host": "local",
+            "addresses": {"api": "http://gamma.local"},
+        }
+        updated["lab"]["setups"]["gamma-bench"] = {
+            "host": "local",
+            "platform_key": "bitaxe-gamma-602",
+            "runner_profile": "gamma.toml",
+            "devices": {"miner": "gamma"},
+        }
+        updated["gates"]["firmware-smoke"]["targets"]["setups"].append(
+            "gamma-bench"
+        )
+        for module in updated["test_modules"].values():
+            module["device_types"].append("bitaxe_602")
+        self.store.replace(updated, expected_revision=self.store.snapshot.revision)
+
+        class Github:
+            def branch_head(self, repository, branch):
+                self.repository = repository
+                if branch == "main":
+                    raise ConfigError("main does not exist")
+                return "b" * 40, None
+
+        github = Github()
+        self.engine.collector.github = github  # type: ignore[assignment]
+        response = await self.client.post(
+            "/api/v1/gates/firmware-smoke/run",
+            headers=self.auth,
+            json={
+                "repository_id": "firmware",
+                "commit_sha": None,
+                "branch": None,
+                "device_types": ["bitaxe_602"],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        run = response.json()
+        self.assertEqual(run["commit_sha"], "b" * 40)
+        self.assertEqual(run["branch"], "master")
+        self.assertEqual(github.repository, "owner/firmware")
+        assignments = self.database.assignments(run["id"])
+        self.assertEqual({item["setup_id"] for item in assignments}, {"gamma-bench"})
+        event = self.database.list_events()[0]
+        self.assertEqual(event["payload"]["device_types"], ["bitaxe_602"])
+        self.assertEqual(event["payload"]["source_resolution"], "latest_project_branch")
+
+    async def test_local_artifact_archive_requires_auth_and_supports_view_download(self) -> None:
+        run = self.engine.manual_run("firmware-smoke", "a" * 40, "main")
+        assignment = self.database.assignments(run["id"])[0]
+        archived = self.root / "state" / "archive" / "runner.log"
+        archived.parent.mkdir(parents=True)
+        archived.write_text("private local runner output\n", encoding="utf-8")
+        self.database.record_assignment_artifacts(
+            [
+                {
+                    "id": "artifact-1",
+                    "assignment_id": assignment["id"],
+                    "attempt": 1,
+                    "relative_path": "runner.log",
+                    "size_bytes": archived.stat().st_size,
+                    "sha256": "a" * 64,
+                    "media_type": "text/plain",
+                    "storage_path": str(archived),
+                }
+            ]
+        )
+
+        denied = await self.client.get(f"/api/v1/gate-runs/{run['id']}/artifacts")
+        listed = await self.client.get(
+            f"/api/v1/gate-runs/{run['id']}/artifacts", headers=self.auth
+        )
+        viewed = await self.client.get(
+            f"/api/v1/gate-runs/{run['id']}/artifacts/artifact-1",
+            headers=self.auth,
+        )
+        downloaded = await self.client.get(
+            f"/api/v1/gate-runs/{run['id']}/artifacts/artifact-1/download",
+            headers=self.auth,
+        )
+
+        self.assertEqual(denied.status_code, 401)
+        self.assertEqual(listed.status_code, 200)
+        self.assertNotIn("storage_path", listed.json()["artifacts"][0])
+        self.assertEqual(viewed.json()["content"], "private local runner output\n")
+        self.assertEqual(downloaded.content, b"private local runner output\n")
 
     async def test_lists_and_approves_an_exact_untrusted_pull_request_head(self) -> None:
         pull = {

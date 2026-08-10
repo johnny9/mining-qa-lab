@@ -83,6 +83,19 @@ create table if not exists resource_leases (
     acquired_at real not null
 );
 
+create table if not exists assignment_artifacts (
+    id text primary key,
+    assignment_id text not null references assignments(id) on delete cascade,
+    attempt integer not null,
+    relative_path text not null,
+    size_bytes integer not null,
+    sha256 text not null,
+    media_type text not null,
+    storage_path text not null,
+    created_at real not null,
+    unique(assignment_id, attempt, relative_path)
+);
+
 create table if not exists publications (
     gate_run_id text primary key references gate_runs(id) on delete cascade,
     status text not null,
@@ -94,6 +107,8 @@ create table if not exists publications (
 create index if not exists events_unplanned_idx on events(planned_at, created_at);
 create index if not exists gate_runs_status_idx on gate_runs(status, created_at);
 create index if not exists assignments_status_idx on assignments(status, created_at);
+create index if not exists assignment_artifacts_assignment_idx
+    on assignment_artifacts(assignment_id, attempt, relative_path);
 """
 
 
@@ -393,6 +408,72 @@ class OrchestratorDatabase:
             connection.execute(
                 "delete from resource_leases where assignment_id = ?", (assignment_id,)
             )
+
+    def record_assignment_artifacts(
+        self, artifacts: list[Mapping[str, Any]]
+    ) -> None:
+        if not artifacts:
+            return
+        now = time.time()
+        with self.transaction() as connection:
+            for artifact in artifacts:
+                connection.execute(
+                    """
+                    insert into assignment_artifacts(
+                        id, assignment_id, attempt, relative_path, size_bytes,
+                        sha256, media_type, storage_path, created_at
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        artifact["id"],
+                        artifact["assignment_id"],
+                        artifact["attempt"],
+                        artifact["relative_path"],
+                        artifact["size_bytes"],
+                        artifact["sha256"],
+                        artifact["media_type"],
+                        artifact["storage_path"],
+                        now,
+                    ),
+                )
+
+    def assignment_artifacts(
+        self, *, run_id: str | None = None, assignment_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        parameters: list[Any] = []
+        if run_id:
+            clauses.append("a.gate_run_id = ?")
+            parameters.append(run_id)
+        if assignment_id:
+            clauses.append("aa.assignment_id = ?")
+            parameters.append(assignment_id)
+        where = f"where {' and '.join(clauses)}" if clauses else ""
+        rows = self._connection.execute(
+            f"""
+            select aa.*, a.gate_run_id, a.setup_id, a.module_id
+            from assignment_artifacts aa
+            join assignments a on a.id = aa.assignment_id
+            {where}
+            order by aa.created_at, aa.relative_path
+            """,
+            parameters,
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def assignment_artifact(self, run_id: str, artifact_id: str) -> dict[str, Any]:
+        row = self._connection.execute(
+            """
+            select aa.*, a.gate_run_id, a.setup_id, a.module_id
+            from assignment_artifacts aa
+            join assignments a on a.id = aa.assignment_id
+            where a.gate_run_id = ? and aa.id = ?
+            """,
+            (run_id, artifact_id),
+        ).fetchone()
+        if row is None:
+            raise KeyError(artifact_id)
+        return dict(row)
 
     def update_gate_run(
         self,

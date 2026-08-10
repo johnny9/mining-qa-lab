@@ -10,6 +10,11 @@
   exact commit/head identity.
 - [x] **ORCH-API-AC-04:** Focused overview/gates/lab/trigger/config pages render
   from server-side snapshot/history rather than independent policy state.
+- [x] **ORCH-API-AC-09:** Manual UI/API accepts a project, compatible gate,
+  optional exact commit or branch, and device types; blank source resolves the
+  latest configured `main`, then `master`, to an exact commit.
+- [x] **ORCH-API-AC-10:** Authenticated run history lists archived artifacts,
+  views bounded UTF-8 files, and downloads files without exposing storage paths.
 
 ## Interfaces and compatibility
 

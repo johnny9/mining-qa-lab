@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urlparse
 
+from .archive import ArtifactArchiver
 from .config import ConfigStore, config_digest
 from .database import OrchestratorDatabase
 from .errors import ConfigError
@@ -108,8 +109,21 @@ class Planner:
                     continue
                 lab = config["lab"]
                 assignments: list[dict[str, str]] = []
+                requested_device_types = {
+                    str(item)
+                    for item in event["payload"].get("device_types", [])
+                    if isinstance(item, str)
+                }
                 for setup_id in gate["targets"]["setups"]:
                     setup = lab["setups"][setup_id]
+                    setup_types = {
+                        str(lab["devices"][item]["type"])
+                        for item in setup["devices"].values()
+                    }
+                    if requested_device_types and setup_types.isdisjoint(
+                        requested_device_types
+                    ):
+                        continue
                     platform = _platform_key(setup, lab["devices"])
                     for module_id in gate["test_modules"]:
                         assignments.append(
@@ -140,12 +154,14 @@ class AssignmentExecutor:
         gate_publisher: GatePublisher,
         firmware_deployer: FirmwareDeployer | None = None,
         testcode_installer: TestcodeInstaller | None = None,
+        artifact_archiver: ArtifactArchiver | None = None,
     ) -> None:
         self.database = database
         self.config_store = config_store
         self.gate_publisher = gate_publisher
         self.firmware_deployer = firmware_deployer or FirmwareDeployer()
         self.testcode_installer = testcode_installer or TestcodeInstaller()
+        self.artifact_archiver = artifact_archiver or ArtifactArchiver()
 
     def _resources(self, assignment: Mapping[str, Any], config: Mapping[str, Any]) -> list[str]:
         setup = config["lab"]["setups"][assignment["setup_id"]]
@@ -316,6 +332,8 @@ class AssignmentExecutor:
             or (str(installation.checkout) if installation is not None else None)
         )
         timeout = float(module.get("timeout", gate.get("timeout", 3600)))
+        result_id: str | None = None
+        result_url: str | None = None
         try:
             if host["transport"] == "local":
                 result = subprocess.run(
@@ -375,10 +393,23 @@ class AssignmentExecutor:
             pointer_payload = _load_result_pointer(pointer)
             result_id, result_url = self._qa_result(pointer_payload)
             status = str(pointer_payload["status"])
+            archived = self.artifact_archiver.archive(
+                pointer_payload,
+                gate_run_id=run["id"],
+                assignment_id=assignment["id"],
+                attempt=int(assignment["attempt"]) + 1,
+                host=host,
+                state_dir=state_dir,
+            )
+            self.database.record_assignment_artifacts(archived)
+            detail = f"miner-test exited {returncode}"
+            if config["qa_status"].get("enabled") and not result_id:
+                status = "error"
+                detail = "Mining QA Status child publication was missing or failed"
             self.database.finish_assignment(
                 assignment["id"],
                 status=status,
-                detail=f"miner-test exited {returncode}",
+                detail=detail,
                 result_pointer=str(pointer) if pointer.exists() else None,
                 qa_result_id=result_id,
                 qa_result_url=result_url,
@@ -390,14 +421,25 @@ class AssignmentExecutor:
                     next(item for item in updated_run["assignments"] if item["id"] == assignment["id"]),
                     result_id,
                 )
-        except (OSError, subprocess.SubprocessError, json.JSONDecodeError, PublishError) as exc:
+        except (
+            ConfigError,
+            OSError,
+            subprocess.SubprocessError,
+            json.JSONDecodeError,
+            PublishError,
+        ) as exc:
             prefix = installation.log if installation is not None else ""
             log_path.write_text(
                 f"{prefix}{type(exc).__name__}: {exc}\n",
                 encoding="utf-8",
             )
             self.database.finish_assignment(
-                assignment["id"], status="error", detail=str(exc)[:2000]
+                assignment["id"],
+                status="error",
+                detail=str(exc)[:2000],
+                result_pointer=str(pointer) if pointer.exists() else None,
+                qa_result_id=result_id,
+                qa_result_url=result_url,
             )
 
 
@@ -490,18 +532,102 @@ class OrchestratorEngine:
         except PublishError as exc:
             logger.error("could not publish completed gate %s: %s", run_id, exc)
 
-    def manual_run(self, gate_id: str, commit_sha: str, branch: str | None = None) -> dict[str, Any]:
+    def default_target(
+        self, repository_id: str, branch: str | None = None
+    ) -> dict[str, str]:
+        config = self.config_store.snapshot.document
+        repository = config["repositories"].get(repository_id)
+        if not isinstance(repository, dict):
+            raise ConfigError(f"unknown repository: {repository_id}")
+        configured = [str(item) for item in repository["pushes"]["branches"]]
+        if branch:
+            if branch not in configured:
+                raise ConfigError(
+                    f"branch {branch!r} is not configured for repository {repository_id!r}"
+                )
+            candidates = [branch]
+        else:
+            candidates = [item for item in ("main", "master") if item in configured]
+        failures = []
+        for candidate in candidates:
+            try:
+                commit_sha, _ = self.collector.github.branch_head(
+                    repository["repository"], candidate
+                )
+            except ConfigError as exc:
+                failures.append(f"{candidate}: {exc}")
+                continue
+            if len(commit_sha) != 40 or any(
+                character not in "0123456789abcdef" for character in commit_sha
+            ):
+                raise ConfigError("GitHub returned an invalid branch-head commit SHA")
+            return {"repository_id": repository_id, "branch": candidate, "commit_sha": commit_sha}
+        detail = "; ".join(failures) or "no main/master branch is configured"
+        raise ConfigError(
+            f"could not resolve the latest configured project branch: {detail}"
+        )
+
+    @staticmethod
+    def _manual_device_types(
+        config: Mapping[str, Any], gate: Mapping[str, Any], requested: list[str] | None
+    ) -> list[str]:
+        lab = config["lab"]
+        available = sorted(
+            {
+                str(lab["devices"][device_id]["type"])
+                for setup_id in gate["targets"]["setups"]
+                for device_id in lab["setups"][setup_id]["devices"].values()
+            }
+        )
+        selected = available if requested is None else list(dict.fromkeys(requested))
+        if not selected:
+            raise ConfigError("select at least one device type")
+        unknown = sorted(set(selected) - set(available))
+        if unknown:
+            raise ConfigError(
+                f"device types are not available to this gate: {', '.join(unknown)}"
+            )
+        return selected
+
+    def manual_run(
+        self,
+        gate_id: str,
+        commit_sha: str | None = None,
+        branch: str | None = None,
+        *,
+        repository_id: str | None = None,
+        device_types: list[str] | None = None,
+    ) -> dict[str, Any]:
         config = self.config_store.snapshot.document
         if gate_id not in config["gates"]:
             raise ConfigError(f"unknown gate: {gate_id}")
-        if len(commit_sha) < 7 or any(character not in "0123456789abcdefABCDEF" for character in commit_sha):
-            raise ConfigError("commit_sha must be hexadecimal and at least seven characters")
         gate = config["gates"][gate_id]
+        if repository_id is not None and gate["repository"] != repository_id:
+            raise ConfigError("gate does not belong to the selected repository")
+        source_resolution = "explicit_commit"
+        if commit_sha is None or not commit_sha.strip():
+            target = self.default_target(gate["repository"], branch)
+            commit_sha = target["commit_sha"]
+            branch = target["branch"]
+            source_resolution = "latest_project_branch"
+        elif branch is not None and branch not in config["repositories"][
+            gate["repository"]
+        ]["pushes"]["branches"]:
+            raise ConfigError(
+                f"branch {branch!r} is not configured for repository {gate['repository']!r}"
+            )
+        if len(commit_sha) != 40 or any(
+            character not in "0123456789abcdefABCDEF" for character in commit_sha
+        ):
+            raise ConfigError("commit_sha must be a full 40-character hexadecimal SHA")
+        selected_types = self._manual_device_types(config, gate, device_types)
         event = self.collector.manual(
             repository_id=gate["repository"],
             commit_sha=commit_sha.lower(),
             branch=branch,
             gate_id=gate_id,
+            device_types=selected_types,
+            source_resolution=source_resolution,
         )
         self.planner.plan(config)
         runs = self.database.list_gate_runs(gate_id=gate_id)

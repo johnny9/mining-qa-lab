@@ -49,6 +49,8 @@
 - Local durable assignment state is aggregated deterministically: queued/running,
   skipped/cancelled/error, then required policy for pass/fail.
 - Parent request provenance distinguishes requester and authorization source.
+- Manual request provenance includes selected project, device types, and source
+  resolution alongside requester and authorization source.
 - Parent external identity is stable for the local gate run.
 - Child result ID/URL comes from the runner result pointer and is linked to the
   correct assignment.
@@ -56,6 +58,8 @@
 ### Forbidden behavior
 
 - Do not upload child artifacts or duplicate detailed child records from parent.
+- Do not accept the local archive as a substitute for a Mining QA child identity
+  when QA publication is enabled.
 - Do not claim passed while any required assignment is running/error/failed.
 - Do not let publication failure rewrite the local test/gate outcome.
 - Do not expose tokens or private lab coordinates in the payload.
@@ -75,7 +79,8 @@ assignment child ID/URL are correlation fields for repeat publication/linking.
 ## Failure and recovery
 
 Publish/link errors are bounded and logged. Durable IDs allow later updates;
-operators can diagnose missing links without losing local results.
+operators can diagnose missing links and inspect the private archive without
+losing local results. The archive does not turn publication failure into success.
 
 ## Compatibility and migration
 

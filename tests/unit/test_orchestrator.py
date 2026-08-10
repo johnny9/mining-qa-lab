@@ -465,22 +465,92 @@ class SchedulingTest(unittest.TestCase):
         self.assertEqual({item["module_id"] for item in assignments}, {"smoke", "regression"})
         self.assertEqual({item["platform_key"] for item in assignments}, {"bitaxe-bonanza-1002"})
 
+    def test_manual_gate_resolves_master_fallback_and_filters_device_types(self) -> None:
+        class Github:
+            def branch_head(self, repository, branch):
+                if branch == "main":
+                    raise ConfigError("main does not exist")
+                return "b" * 40, None
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            document = configuration(root)
+            document["lab"]["devices"]["gamma"] = {
+                "name": "Gamma",
+                "type": "bitaxe_602",
+                "host": "local",
+                "addresses": {"api": "http://gamma.local"},
+            }
+            document["lab"]["setups"]["gamma-bench"] = {
+                "host": "local",
+                "platform_key": "bitaxe-gamma-602",
+                "runner_profile": "gamma.toml",
+                "devices": {"miner": "gamma"},
+            }
+            document["gates"]["firmware-smoke"]["targets"]["setups"].append(
+                "gamma-bench"
+            )
+            for module in document["test_modules"].values():
+                module["device_types"].append("bitaxe_602")
+            path = root / "orchestrator.yaml"
+            path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            store = ConfigStore(path)
+            database = OrchestratorDatabase(root / "state.sqlite3")
+            engine = OrchestratorEngine(store, database)
+            engine.collector.github = Github()  # type: ignore[assignment]
+
+            run = engine.manual_run(
+                "firmware-smoke",
+                repository_id="firmware",
+                device_types=["bitaxe_602"],
+            )
+            assignments = database.assignments(run["id"])
+            event = database.list_events()[0]
+            database.close()
+
+        self.assertEqual(run["commit_sha"], "b" * 40)
+        self.assertEqual(run["branch"], "master")
+        self.assertEqual({item["setup_id"] for item in assignments}, {"gamma-bench"})
+        self.assertEqual(event["payload"]["device_types"], ["bitaxe_602"])
+        self.assertEqual(event["payload"]["source_resolution"], "latest_project_branch")
+
     def test_executes_manual_gate_and_reads_existing_child_result_pointer(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             script = root / "fake-miner-test"
             script.write_text(
                 """#!/usr/bin/env python3
-import json, os
+import hashlib, json, os
 from pathlib import Path
 metadata = json.loads(os.environ["MINER_TEST_ORCHESTRATION_METADATA"])
 assert metadata["contract_version"] == 1
 assert metadata["gate_id"] == "firmware-smoke"
 pointer = Path(os.environ["MINER_TEST_RESULT_POINTER"])
 pointer.parent.mkdir(parents=True, exist_ok=True)
+artifact_root = pointer.parent / "runner-artifacts"
+artifact_root.mkdir()
+artifact = b"sanitized child log\\n"
+(artifact_root / "runner.log").write_bytes(artifact)
+manifest = json.dumps({
+    "version": 1,
+    "run_id": "runner-run",
+    "artifacts": [{
+        "path": "runner.log",
+        "size_bytes": len(artifact),
+        "sha256": hashlib.sha256(artifact).hexdigest(),
+        "media_type": "text/plain",
+    }],
+}, sort_keys=True).encode()
+(artifact_root / "orchestration-artifacts.json").write_bytes(manifest)
 pointer.write_text(json.dumps({
     "contract_version": 1,
     "status": "passed",
+    "artifact_root": str(artifact_root),
+    "artifact_manifest": {
+        "path": "orchestration-artifacts.json",
+        "size_bytes": len(manifest),
+        "sha256": hashlib.sha256(manifest).hexdigest(),
+    },
     "publishers": [{
         "name": "mining_qa_status", "success": True, "required": True,
         "url": "https://qa.example/results/child-result-id"
@@ -510,6 +580,15 @@ pointer.write_text(json.dumps({
             )
             self.assertTrue(
                 all(Path(item["result_pointer"]).is_file() for item in completed["assignments"])
+            )
+            archived = database.assignment_artifacts(run_id=run["id"])
+            self.assertEqual(len(archived), 2)
+            self.assertTrue(
+                all(
+                    Path(item["storage_path"]).read_text(encoding="utf-8")
+                    == "sanitized child log\n"
+                    for item in archived
+                )
             )
             database.close()
 
@@ -583,6 +662,51 @@ pointer.write_text(json.dumps({
             self.assertEqual(completed["status"], "passed")
             self.assertEqual(installer.calls, 2)
             self.assertIn("testcode installed", log.read_text(encoding="utf-8"))
+            database.close()
+
+    def test_enabled_qa_requires_published_child_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = root / "fake-miner-test"
+            script.write_text(
+                """#!/usr/bin/env python3
+import json, os
+from pathlib import Path
+pointer = Path(os.environ["MINER_TEST_RESULT_POINTER"])
+pointer.parent.mkdir(parents=True, exist_ok=True)
+pointer.write_text(json.dumps({
+    "contract_version": 1,
+    "status": "passed",
+    "publishers": [],
+}))
+""",
+                encoding="utf-8",
+            )
+            script.chmod(0o700)
+            document = configuration(root)
+            document["qa_status"] = {
+                "enabled": True,
+                "base_url": "https://qa.example",
+                "token_env": "MINING_QA_TOKEN",
+            }
+            document["lab"]["hosts"]["local"]["miner_test"] = str(script)
+            (root / "runner.toml").write_text("", encoding="utf-8")
+            path = root / "orchestrator.yaml"
+            path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            store = ConfigStore(path)
+            database = OrchestratorDatabase(root / "state.sqlite3")
+            engine = OrchestratorEngine(store, database)
+            run = engine.manual_run("firmware-smoke", "a" * 40, "main")
+            assignment = database.assignments(run["id"])[0]
+
+            engine.executor.execute(assignment)
+            completed = database.gate_run(run["id"])
+
+            self.assertEqual(completed["assignments"][0]["status"], "error")
+            self.assertIn(
+                "Mining QA Status child publication was missing",
+                completed["assignments"][0]["detail"],
+            )
             database.close()
 
     def test_testcode_install_failure_prevents_firmware_and_runner(self) -> None:
@@ -713,6 +837,9 @@ class GatePublisherTest(unittest.TestCase):
             {
                 "requested_by": "alice",
                 "authorization_source": "local_control_plane",
+                "repository_id": "firmware",
+                "device_types": [],
+                "source_resolution": None,
             },
         )
         self.assertEqual(transport.calls[1]["body"]["result_id"], "child-id")

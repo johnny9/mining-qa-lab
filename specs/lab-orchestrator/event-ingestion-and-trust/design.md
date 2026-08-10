@@ -47,6 +47,12 @@
 
 ### Required invariants
 
+- Manual requests bind a compatible repository/gate and persist the requested
+  device types plus source-resolution provenance. With no commit/branch, the
+  controller resolves configured `main`, then `master`, to a full commit SHA.
+- An explicitly selected branch must be configured for that repository; an
+  explicitly supplied commit remains the exact execution identity.
+
 - Source identities are unique and replay-safe.
 - Initial branch polling establishes a cursor without backfilling old work.
 - Trusted PR automation is restricted by configured contributor/base policy.

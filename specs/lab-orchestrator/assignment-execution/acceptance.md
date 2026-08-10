@@ -18,6 +18,12 @@
 - [x] **ORCH-EXEC-AC-06:** Missing/malformed/oversized/unsupported-version
   pointer, timeout, SSH/process, or deployment failure cannot be recorded as
   passed.
+- [x] **ORCH-EXEC-AC-09:** A supplied manifest is bounded and every archived
+  local/SSH artifact is path-, size-, and SHA-256-verified into attempt-specific
+  private storage; legacy pointers may omit it.
+- [x] **ORCH-EXEC-AC-10:** With Mining QA Status enabled, a successful runner
+  without a published child identity becomes an assignment error even if local
+  artifacts are available.
 
 ## Quality attributes
 
@@ -31,6 +37,8 @@
 - `tests.unit.test_orchestrator` covers local execution, versioned metadata,
   bounded/unsupported pointer handling, optional installed runner ordering,
   leases, and child publication linkage; reconciled 2026-08-10.
+- `tests.unit.test_orchestrator_archive` covers local and bounded SSH retrieval,
+  tamper rejection, and hash-verified storage; reconciled 2026-08-10.
 - Live local/SSH HIL was not run for this documentation iteration.
 
 ## Acceptance rule

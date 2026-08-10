@@ -17,6 +17,9 @@
   contract and deterministic deduplication.
 - [x] **ORCH-EVENTS-AC-06:** Tokens and authorization headers never enter event
   payloads or logs.
+- [x] **ORCH-EVENTS-AC-09:** Manual requests retain project, selected device
+  types, and whether their exact commit was explicit or resolved from configured
+  `main`/`master`.
 
 ## Quality attributes
 

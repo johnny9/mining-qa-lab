@@ -21,7 +21,9 @@ contracts must be clearer than its presentation.
 
 A versioned REST API and small server-rendered UI expose safe observability and
 explicit authenticated mutations, with conditional configuration writes and
-exact source identities.
+exact source identities. Operators can run a gate against a selected project,
+source, and device types and inspect privately archived results without leaving
+the lab UI.
 
 ## Primary flow
 

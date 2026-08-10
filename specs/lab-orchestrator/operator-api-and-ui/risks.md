@@ -26,11 +26,15 @@
 - Token file permissions or logs leak bearer authority.
 - Stale UI submits a destructive config edit without correct revision.
 - Health says `ok` while the background loop is repeatedly failing.
+- A forged database path or oversized/binary inline view exposes unrelated host
+  data or exhausts the API process.
 
 ## Security, privacy, and safety
 
 Default to bearer auth and loopback/restricted networks. Mutations are explicit,
 conditional, and bounded; sensitive lab coordinates/photos remain restricted.
+Archived artifacts receive the same authentication and restricted-network
+treatment and storage paths are never returned to clients.
 
 ## Performance and resource risks
 
