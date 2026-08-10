@@ -296,7 +296,14 @@ class OrchestratorDatabase:
 
     def gate_run(self, run_id: str, *, include_config: bool = False) -> dict[str, Any]:
         row = self._connection.execute(
-            "select * from gate_runs where id = ?", (run_id,)
+            """
+            select gate_runs.*, events.contributor as requested_by,
+                   events.payload as event_payload
+            from gate_runs
+            join events on events.id = gate_runs.event_id
+            where gate_runs.id = ?
+            """,
+            (run_id,),
         ).fetchone()
         value = dict(row) if row else None
         if value is None:
@@ -304,6 +311,8 @@ class OrchestratorDatabase:
         snapshot = value.pop("config_snapshot", None)
         if include_config and isinstance(snapshot, str):
             value["config_snapshot"] = json.loads(snapshot)
+        if isinstance(value.get("event_payload"), str):
+            value["event_payload"] = json.loads(value["event_payload"])
         value["assignments"] = self.assignments(run_id)
         return value
 

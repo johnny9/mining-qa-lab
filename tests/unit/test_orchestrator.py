@@ -482,6 +482,8 @@ class GatePublisherTest(unittest.TestCase):
             "required_policy": "all",
             "status": "passed",
             "summary": "1/1 assignments passed",
+            "requested_by": "alice",
+            "event_payload": {"approval_source": "local_control_plane"},
             "started_at": 1.0,
             "finished_at": 2.0,
         }
@@ -505,6 +507,13 @@ class GatePublisherTest(unittest.TestCase):
 
         self.assertEqual(published["id"], "gate-qa-id")
         self.assertEqual(transport.calls[0]["body"]["platforms"], ["bitaxe-bonanza-1002"])
+        self.assertEqual(
+            transport.calls[0]["body"]["details"]["request"],
+            {
+                "requested_by": "alice",
+                "authorization_source": "local_control_plane",
+            },
+        )
         self.assertEqual(transport.calls[1]["body"]["result_id"], "child-id")
         self.assertEqual(len(transport.calls), 2)
 

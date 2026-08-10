@@ -42,6 +42,10 @@ AxeOS artifacts; it has no separate bridge firmware lifecycle.
 - A durable local orchestrator for GitHub push/PR events, cron schedules,
   compatible lab-device assignment, local or SSH execution, and parent gate
   publication to Mining QA Status.
+- Parent gate metadata records the requesting contributor and trusted or local
+  approval source. Mining QA Status owns the GitHub App credentials and turns
+  that aggregate into the informational Check Run and PR summary; the hardware
+  host does not receive those credentials.
 
 ## Architecture
 

@@ -53,6 +53,12 @@ class GatePublisher:
         if not self.enabled:
             return None
         base_url, token = self._connection()
+        event_payload = gate_run.get("event_payload")
+        if not isinstance(event_payload, Mapping):
+            event_payload = {}
+        authorization_source = event_payload.get("approval_source")
+        if not authorization_source and gate_run["trigger_type"] == "pull_request":
+            authorization_source = "trusted_contributor"
         payload = {
             "gate_key": gate_run["gate_id"],
             "gate_name": str(gate.get("name") or gate_run["gate_id"]),
@@ -71,6 +77,10 @@ class GatePublisher:
             "platforms": sorted({item["platform_key"] for item in assignments}),
             "details": {
                 "required_policy": gate_run.get("required_policy", "all"),
+                "request": {
+                    "requested_by": gate_run.get("requested_by"),
+                    "authorization_source": authorization_source,
+                },
                 "assignments": [
                     {
                         "assignment_id": item["id"],
