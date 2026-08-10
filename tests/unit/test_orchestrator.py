@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import re
 import tempfile
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import yaml
@@ -22,6 +24,7 @@ from mining_qa_lab.events import EventCollector, cron_matches, paths_match
 from mining_qa_lab.http import PublishError
 from mining_qa_lab.qa_status import GatePublisher
 from mining_qa_lab.testcode import TestcodeInstallation
+from mining_qa_lab.ui import render_page
 
 
 def configuration(root: Path) -> dict:
@@ -768,6 +771,51 @@ pointer.write_text(json.dumps({
             database.finish_assignment(first["id"], status="passed")
             self.assertTrue(database.acquire(second["id"], ["device:bonanza"]))
             database.close()
+
+
+class OperatorUiTest(unittest.TestCase):
+    def test_marks_only_safe_terminal_gate_runs_as_retryable(self) -> None:
+        document = configuration(Path("/tmp/mining-qa-lab-ui-test"))
+        snapshot = SimpleNamespace(
+            document=document,
+            revision="a" * 64,
+            etag='"config-test"',
+        )
+        runs = [
+            {
+                "id": f"{status}-run",
+                "gate_id": "firmware-smoke",
+                "trigger_type": "manual",
+                "commit_sha": "b" * 40,
+                "pr_number": None,
+                "status": status,
+            }
+            for status in (
+                "failed",
+                "error",
+                "cancelled",
+                "passed",
+                "queued",
+                "running",
+                "superseded",
+            )
+        ]
+
+        page = render_page("overview", snapshot, runs=runs)
+        bootstrap_match = re.search(
+            r'<script id="bootstrap" type="application/json">(.*?)</script>', page
+        )
+
+        self.assertIsNotNone(bootstrap_match)
+        bootstrap = json.loads(bootstrap_match.group(1))
+        by_status = {item["status"]: item for item in bootstrap["runs"]}
+        self.assertTrue(by_status["failed"]["retryable"])
+        self.assertTrue(by_status["error"]["retryable"])
+        self.assertTrue(by_status["cancelled"]["retryable"])
+        for status in ("passed", "queued", "running", "superseded"):
+            self.assertFalse(by_status[status]["retryable"])
+        self.assertIn('data-action="retry-run"', page)
+        self.assertIn("Retry incomplete assignments", page)
 
 
 class FakeTransport:

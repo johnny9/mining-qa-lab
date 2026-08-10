@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -62,6 +64,9 @@ class OrchestratorApiTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("/api/v1/lab/devices/{device_id}/photo", schema.json()["paths"])
         self.assertIn(
             "/api/v1/gate-runs/{run_id}/artifacts", schema.json()["paths"]
+        )
+        self.assertIn(
+            "/api/v1/gate-runs/{run_id}/retry", schema.json()["paths"]
         )
 
     async def test_resource_mutation_requires_token_and_current_etag(self) -> None:
@@ -140,6 +145,50 @@ class OrchestratorApiTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn('class="manual-run-form"', trigger.text)
         self.assertIn("'manual_device_types'", trigger.text)
         self.assertIn('data-action="approve-pr"', trigger.text)
+
+    async def test_overview_retries_failed_gate_through_authenticated_api(self) -> None:
+        run = self.engine.manual_run("firmware-smoke", "a" * 40, "main")
+        assignments = self.database.assignments(run["id"])
+        failed = assignments[0]
+        self.assertTrue(self.database.acquire(failed["id"], []))
+        self.database.finish_assignment(
+            failed["id"], status="failed", detail="pool port mismatch"
+        )
+        for assignment in assignments[1:]:
+            self.assertTrue(self.database.acquire(assignment["id"], []))
+            self.database.finish_assignment(assignment["id"], status="passed")
+        self.database.update_gate_run(
+            run["id"], status="failed", summary="retry regression"
+        )
+
+        dashboard = await self.client.get("/")
+        bootstrap_match = re.search(
+            r'<script id="bootstrap" type="application/json">(.*?)</script>',
+            dashboard.text,
+        )
+        self.assertIsNotNone(bootstrap_match)
+        bootstrap = json.loads(bootstrap_match.group(1))
+        rendered_run = next(
+            item for item in bootstrap["runs"] if item["id"] == run["id"]
+        )
+        denied = await self.client.post(f"/api/v1/gate-runs/{run['id']}/retry")
+        retried = await self.client.post(
+            f"/api/v1/gate-runs/{run['id']}/retry", headers=self.auth
+        )
+
+        self.assertTrue(rendered_run["retryable"])
+        self.assertIn('data-action="retry-run"', dashboard.text)
+        self.assertIn("Retry incomplete assignments", dashboard.text)
+        self.assertEqual(denied.status_code, 401)
+        self.assertEqual(retried.status_code, 200)
+        self.assertEqual(retried.json()["status"], "queued")
+        by_id = {item["id"]: item for item in retried.json()["assignments"]}
+        self.assertEqual(by_id[failed["id"]]["status"], "queued")
+        self.assertEqual(by_id[failed["id"]]["attempt"], 1)
+        self.assertIsNone(by_id[failed["id"]]["detail"])
+        self.assertTrue(
+            all(by_id[item["id"]]["status"] == "passed" for item in assignments[1:])
+        )
 
     async def test_manual_gate_defaults_to_latest_main_or_master_and_device_types(self) -> None:
         document = self.store.snapshot.document

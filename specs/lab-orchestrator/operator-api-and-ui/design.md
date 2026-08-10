@@ -35,9 +35,10 @@
 
 - `/api/v1/health`; config JSON/YAML, validate/reload/revisions; CRUD for
   repositories/modules/gates/hosts/devices/setups; gate validation/manual run;
-  PR list/exact-head approval; events/runs/assignments; per-run artifact list,
-  UTF-8 view, and download; host/device/USB/photo/setup preflight. Mutations
-  require authorization; config edits require ETag.
+  PR list/exact-head approval; events/runs/assignments; confirmed retry of
+  eligible terminal runs; per-run artifact list, UTF-8 view, and download;
+  host/device/USB/photo/setup preflight. Mutations require authorization; config
+  edits require ETag.
 
 ### Files, artifacts, payloads, and persistent state
 
@@ -58,6 +59,10 @@
   submission; explicit commits remain exact identities.
 - Artifact APIs serve only persisted archive records whose resolved paths remain
   below `state_dir/archive`; inline viewing is UTF-8 and limited to 1 MiB.
+- Retry eligibility is derived on the server-rendered history view. The UI offers
+  the action only for failed, errored, or cancelled runs, confirms the gate and
+  exact commit, and delegates to the authenticated retry route. Passed
+  assignments remain passed.
 - List limits, request/photo bodies, probe output, subprocesses, and network
   calls are bounded.
 - UI is a view/client of server domain state, not a second policy implementation.
@@ -79,7 +84,8 @@ UI pages render selected current snapshot/history and issue explicit actions.
 
 1. Lifespan recovers interrupted state and starts bounded poll/tick loop.
 2. Middleware applies network policy; dependencies authorize mutations.
-3. Routes validate inputs and delegate to store/engine/database.
+3. Routes validate inputs and delegate to store/engine/database; retry returns
+   durable state after incomplete assignments are requeued.
 4. Responses expose revisions or durable IDs; UI renders the same contracts.
 
 ## Failure and recovery
@@ -110,6 +116,7 @@ and background execution are bounded. Service is intended for a restricted lab.
 ## Verification approach
 
 Use ASGI tests for auth/network, ETags, schemas/routes, CRUD, exact approval,
-history/actions, probes/photos/preflight, page separation, and OpenAPI visibility.
-Also cover manual source/device selection and authenticated artifact isolation,
-view bounds, binary rejection, and downloads.
+history/actions, retry eligibility and authentication, probes/photos/preflight,
+page separation, and OpenAPI visibility. Also cover manual source/device
+selection and authenticated artifact isolation, view bounds, binary rejection,
+and downloads.

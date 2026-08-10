@@ -15,6 +15,9 @@
   latest configured `main`, then `master`, to an exact commit.
 - [x] **ORCH-API-AC-10:** Authenticated run history lists archived artifacts,
   views bounded UTF-8 files, and downloads files without exposing storage paths.
+- [x] **ORCH-API-AC-11:** Overview offers a confirmed retry only for failed,
+  errored, or cancelled runs and invokes the authenticated retry API, which
+  requeues incomplete assignments without rerunning passed assignments.
 
 ## Interfaces and compatibility
 
@@ -26,15 +29,15 @@
 ## Quality attributes
 
 - [x] **ORCH-API-AC-07:** ASGI/unit tests cover OpenAPI, CRUD/ETags, auth/network,
-  exact approval, page separation, and lab operations.
+  exact approval, page separation, retry eligibility/action, and lab operations.
 - [ ] **ORCH-API-AC-08:** Current deployed service bind/firewall/auth/token-file
   permissions and operator workflows have been audited on the live host.
 
 ## Verification evidence
 
-- `tests.unit.test_orchestrator_web` exercises the HTTP/UI contracts and
-  `tests.unit.test_orchestrator` exercises CLI-domain operations; reconciled
-  2026-08-10.
+- `tests.unit.test_orchestrator_web` exercises authenticated HTTP/UI retry
+  behavior and `tests.unit.test_orchestrator` covers server-rendered retry
+  eligibility alongside CLI-domain operations; reconciled 2026-08-10.
 - No live service security/operations audit was performed for this iteration.
 
 ## Acceptance rule

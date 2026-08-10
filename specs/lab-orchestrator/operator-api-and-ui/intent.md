@@ -23,13 +23,14 @@ A versioned REST API and small server-rendered UI expose safe observability and
 explicit authenticated mutations, with conditional configuration writes and
 exact source identities. Operators can run a gate against a selected project,
 source, and device types and inspect privately archived results without leaving
-the lab UI.
+the lab UI. They can also retry the incomplete assignments in an eligible
+terminal run without editing durable state or rerunning assignments that passed.
 
 ## Primary flow
 
 Authenticate/restrict the client, read current config/gates/lab/history, validate
-or conditionally mutate resources, approve/trigger exact work, and observe runs
-and probes through bounded responses.
+or conditionally mutate resources, approve/trigger exact work, explicitly
+confirm eligible retries, and observe runs and probes through bounded responses.
 
 ## Alternate and failure flows
 

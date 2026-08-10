@@ -13,6 +13,8 @@ configuration, gates, trusted triggers, lab inspection, and durable history.
 
 ## Changelog
 
+- 2026-08-10: Added a confirmed overview action for retrying only failed,
+  errored, or cancelled gate runs through the authenticated retry API.
 - 2026-08-10: Added project/branch-or-commit/device-type manual gate controls
   and authenticated local artifact list, view, and download surfaces.
 - 2026-08-10: Linked API health and bounded operational evidence to the
