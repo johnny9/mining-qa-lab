@@ -66,3 +66,12 @@ complete feature directory.
 - A lab operator can use REST or focused pages without exposing an unsafe
   mutation surface →
   [Operator API and UI](lab-orchestrator/operator-api-and-ui/SPEC.md)
+- A lab operator can install, inspect, update, and roll back the long-running
+  service without mixing private state or worker environments →
+  [Service deployment](lab-orchestrator/service-deployment/SPEC.md)
+
+## Maintain reusable project workflows
+
+- Agents can install and update reviewed project-specific operational guidance
+  without overwriting unrelated local skills →
+  [Repository skills](project-tooling/repository-skills/SPEC.md)

@@ -45,6 +45,26 @@ Use the project-local `.agents/skills/specs/SKILL.md` workflow for new features,
 feature reconciliation, review preparation, and product or architecture
 reviews.
 
+## Repository skills
+
+Installable project skills live under `skills/` and remain the source of truth;
+do not maintain a separately edited copy under an agent home.
+
+- Read [Repository skills](specs/project-tooling/repository-skills/SPEC.md) for
+  the packaging and installation contract.
+- For orchestrator service installation, inspection, update, restart, rollback,
+  or systemd troubleshooting, use
+  `skills/manage-lab-orchestrator-deployment/SKILL.md` and read
+  [Service deployment](specs/lab-orchestrator/service-deployment/SPEC.md).
+- Validate changes with `./scripts/validate-codex-skills`.
+- Check destinations with `./scripts/manage-codex-skills status SKILL...`, then
+  install with `./scripts/manage-codex-skills install SKILL...`.
+- The installer creates repository-backed links and never replaces an existing
+  file, directory, or different link. Compare conflicts before asking whether
+  to migrate them.
+- A skill supplies procedure, not authority. Service mutation, config changes,
+  HIL, firmware deployment, and publication still require the relevant request.
+
 A documentation update is normally unnecessary for formatting, test-only
 cleanup, internal renames, or behavior-preserving refactors unless they alter a
 documented contract, supported environment, safety property, or verification
@@ -127,6 +147,8 @@ formatters, linters, or hardware commands that the repository does not define.
 | Validate orchestrator config | `.venv/bin/miner-orchestrator --config <local-yaml> validate` |
 | Run hardware tests | `.venv/bin/miner-test --config <local-toml>` |
 | Documentation integrity | `PYTHONPATH=src .venv/bin/python -m unittest tests.unit.test_specs -v` |
+| Validate repository skills | `./scripts/validate-codex-skills` |
+| Inspect skill installation | `./scripts/manage-codex-skills status all` |
 | Whitespace validation | `git diff --check` |
 
 Hardware commands require a user-authorized target and local ignored profile.
@@ -145,6 +167,7 @@ healthy mining independently.
 | Orchestrator config/API | Validation, auth/network/ETag tests, full unit suite |
 | Events/planning/database | Idempotence, trust, supersession, lease/recovery tests, full unit suite |
 | Firmware deployment | Exact-SHA/digest/member/board/reboot/failure tests; HIL only when authorized |
+| Repository skill or service deployment | Skill/install/inspector/unit tests, spec integrity, package build; live service only when authorized |
 | Documentation only | Spec integrity test, maintenance checklist, `git diff --check` |
 
 ## Repository hygiene

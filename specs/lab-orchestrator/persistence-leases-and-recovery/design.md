@@ -92,6 +92,7 @@ and hardware operations never run while holding a write transaction.
 | [Assignment execution](../assignment-execution/SPEC.md) | Requires/releases device leases and stores outcomes. |
 | [Parent gate publication](../parent-gate-publication/SPEC.md) | Reads durable aggregate state. |
 | [Lifecycle and cleanup](../../test-runner/lifecycle-and-cleanup/SPEC.md) | Runner cleanup is distinct from orchestrator lease release. |
+| [Service deployment](../service-deployment/SPEC.md) | Preserves external SQLite state across exact-release cutover and invokes fail-closed recovery after interruption. |
 
 ## Verification approach
 

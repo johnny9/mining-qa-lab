@@ -26,6 +26,8 @@ not source-directory mirrors. Lifecycle values must match the canonical entry.
 | `lab-orchestrator` | Assignment execution | supported | [SPEC.md](lab-orchestrator/assignment-execution/SPEC.md) | Execute local or SSH runner jobs with bounded environment, logs, timeout, and result pointer. |
 | `lab-orchestrator` | Parent gate publication | supported | [SPEC.md](lab-orchestrator/parent-gate-publication/SPEC.md) | Publish aggregate gate state, request provenance, and immutable child-result links. |
 | `lab-orchestrator` | Operator API and UI | supported | [SPEC.md](lab-orchestrator/operator-api-and-ui/SPEC.md) | Expose authenticated/network-restricted REST and focused local operator pages. |
+| `lab-orchestrator` | Service deployment | supported | [SPEC.md](lab-orchestrator/service-deployment/SPEC.md) | Install, inspect, update, and roll back the orchestrator as an exact-release systemd user service. |
+| `project-tooling` | Repository skills | supported | [SPEC.md](project-tooling/repository-skills/SPEC.md) | Package project workflows as portable, validated, safely installable agent skills. |
 
 Allowed lifecycle values: `proposed`, `implementing`, `supported`, `deprecated`,
 and `retired`.

@@ -48,6 +48,13 @@ child results separately from aggregate gate status.
 - Local or SSH worker execution with bounded environment and child-result
   pointers.
 - Parent gate publication and immutable links to child results.
+- Exact-release systemd service deployment with idle cutover and retained rollback.
+
+### Repository tooling
+
+- Portable, validated project skills with conflict-safe linked installation.
+- Agent and human deployment guidance that preserves authorization, privacy,
+  state, and hardware-safety boundaries.
 
 ## Project boundary
 
@@ -139,9 +146,15 @@ detailed result.
 - Complete feature directory: [INDEX.md](INDEX.md)
 - Outcome navigation: [STORY-MAP.md](STORY-MAP.md)
 - Documentation maintenance: [MAINTENANCE.md](MAINTENANCE.md)
+- Repository skill contract:
+  [Repository skills](project-tooling/repository-skills/SPEC.md)
+- Human service runbook:
+  [ORCHESTRATOR_DEPLOYMENT.md](../docs/ORCHESTRATOR_DEPLOYMENT.md)
 
 ## Changelog
 
+- 2026-08-10: Added exact-release service deployment and repository-owned agent
+  skills as explicit project capabilities.
 - 2026-08-10: Added opt-in latest-testcode resolution with per-gate/host SHA
   pinning, isolated worker installation, and runner-side provenance checks.
 - 2026-08-10: Established the test-runner/lab-orchestrator ownership boundary

@@ -14,6 +14,8 @@ assignment.
 
 ## Changelog
 
+- 2026-08-10: Linked the managed worker checkout/venv boundary to the separate
+  orchestrator service-deployment lifecycle.
 - 2026-08-10: Reconciled supported implementation and automated acceptance;
   live local/SSH operational acceptance remains outstanding.
 - 2026-08-10: Defined managed-checkout installation, per-gate latest-branch

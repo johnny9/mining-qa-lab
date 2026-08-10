@@ -42,6 +42,8 @@ AxeOS artifacts; it has no separate bridge firmware lifecycle.
 - A durable local orchestrator for GitHub push/PR events, cron schedules,
   compatible lab-device assignment, local or SSH execution, and parent gate
   publication to Mining QA Status.
+- An exact-release systemd guide and installable agent skill for inspecting,
+  updating, and rolling back the orchestrator safely.
 - Parent gate metadata records the requesting contributor and trusted or local
   approval source. Mining QA Status owns the GitHub App credentials and turns
   that aggregate into the informational Check Run and PR summary; the hardware
@@ -58,6 +60,18 @@ The durable system and feature contracts live in [specs/](specs/README.md):
 Temporary implementation plans belong in [plans/](plans/README.md). Feature
 behavior, constraints, acceptance criteria, and current evidence belong in the
 specification tree and must be reconciled in the same change.
+
+Repository-owned installable skills live under [skills/](skills/). Validate and
+install the deployment skill with:
+
+```bash
+./scripts/validate-codex-skills
+./scripts/manage-codex-skills status manage-lab-orchestrator-deployment
+./scripts/manage-codex-skills install manage-lab-orchestrator-deployment
+```
+
+Installation creates a repository-backed link and refuses to replace any
+existing destination.
 
 ## Architecture
 
@@ -518,6 +532,12 @@ assignment before firmware deployment or hardware construction. The managed
 venv must differ from the active orchestrator service environment. This feature
 does not update or restart that service; disabling it restores the configured
 host `miner_test` behavior.
+
+For a persistent systemd user service, exact-SHA updates, health checks, and
+rollback, follow the simplified human guide in
+[ORCHESTRATOR_DEPLOYMENT.md](docs/ORCHESTRATOR_DEPLOYMENT.md). The tracked
+example unit lives at
+[miner-orchestrator.service](skills/manage-lab-orchestrator-deployment/assets/miner-orchestrator.service).
 
 On first observation, a branch or pull request is recorded as a baseline rather
 than unexpectedly running hardware. Later SHA changes create events. A newer PR

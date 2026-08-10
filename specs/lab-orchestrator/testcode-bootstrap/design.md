@@ -134,6 +134,7 @@ paths to the executor and public repository/ref/SHA metadata to the runner.
 | [Configuration and control plane](../configuration-and-control-plane/SPEC.md) | Validates opt-in policy and managed host paths. |
 | [Artifacts, privacy, and provenance](../../test-runner/artifacts-privacy-and-provenance/SPEC.md) | Independently records and verifies the exact executing checkout. |
 | [Artifact resolution and deployment](../artifact-resolution-and-deployment/SPEC.md) | Bootstrap must succeed before any firmware deployment. |
+| [Service deployment](../service-deployment/SPEC.md) | Owns the separate orchestrator release/venv; worker testcode updates never update or restart that service. |
 
 ## Verification approach
 

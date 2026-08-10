@@ -99,6 +99,7 @@ and background execution are bounded. Service is intended for a restricted lab.
 | [Event ingestion and trust](../event-ingestion-and-trust/SPEC.md) | Supplies PR/manual actions and background polling. |
 | [Lab inventory and preflight](../lab-inventory-and-preflight/SPEC.md) | Supplies lab resources and probe endpoints. |
 | [Persistence, leases, and recovery](../persistence-leases-and-recovery/SPEC.md) | Supplies history, cancellation, retry, and startup recovery. |
+| [Service deployment](../service-deployment/SPEC.md) | Uses health counts and bounded logs as separate operational signals during cutover and rollback. |
 
 ## Verification approach
 

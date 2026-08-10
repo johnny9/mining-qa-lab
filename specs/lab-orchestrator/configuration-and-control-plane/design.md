@@ -95,6 +95,7 @@ mutations are serialized by the store lock.
 | [Lab inventory and preflight](../lab-inventory-and-preflight/SPEC.md) | Owns inventory semantics represented by the schema. |
 | [Testcode bootstrap](../testcode-bootstrap/SPEC.md) | Consumes validated repository/ref/timeout policy and per-host managed paths. |
 | [Operator API and UI](../operator-api-and-ui/SPEC.md) | Exposes revision-checked control surfaces. |
+| [Service deployment](../service-deployment/SPEC.md) | Keeps private YAML outside releases and aligns configured writable paths with the service sandbox. |
 | [Configuration and selection](../../test-runner/configuration-and-selection/SPEC.md) | Runner profiles referenced by modules/setups remain a separate schema. |
 
 ## Verification approach
