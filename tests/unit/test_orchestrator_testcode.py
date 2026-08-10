@@ -120,6 +120,22 @@ class TestcodeInstallerTest(unittest.TestCase):
             ]
             self.assertEqual(len(latest_calls), 1)
             self.assertEqual(len(pip_calls), 2)
+            clone_calls = [
+                command
+                for _, command, _, _, _ in commands.calls
+                if command[:2] == ["git", "clone"]
+            ]
+            self.assertEqual(
+                clone_calls,
+                [
+                    [
+                        "git",
+                        "clone",
+                        "https://github.com/johnny9/mining-qa-testcode.git",
+                        str(root / "checkout"),
+                    ]
+                ],
+            )
             marker = root / "state" / "testcode" / "gate-run-1" / "local.json"
             self.assertTrue(marker.is_file())
 

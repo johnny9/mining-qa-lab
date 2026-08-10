@@ -221,7 +221,7 @@ class TestcodeInstaller:
             check=False,
         )
         if origin.returncode != 0:
-            run(["git", "clone", "--no-checkout", self._clone_url(repository), str(checkout)])
+            run(["git", "clone", self._clone_url(repository), str(checkout)])
             origin = run(["git", "-C", str(checkout), "remote", "get-url", "origin"])
         if _github_repository(origin.output) != repository:
             raise TestcodeInstallError(

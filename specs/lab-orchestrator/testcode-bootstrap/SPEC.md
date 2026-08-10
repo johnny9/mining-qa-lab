@@ -14,6 +14,8 @@ assignment.
 
 ## Changelog
 
+- 2026-08-10: Fixed fresh managed clones so their first working tree is clean
+  before the tracked-modification safety check.
 - 2026-08-10: Made `mining-qa-testcode` an external repository dependency and
   linked its exact source identity through orchestration contract v1.
 - 2026-08-10: Linked the managed worker checkout/venv boundary to the separate
