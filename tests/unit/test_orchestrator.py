@@ -23,6 +23,7 @@ from mining_qa_lab.engine import (
 from mining_qa_lab.events import EventCollector, cron_matches, paths_match
 from mining_qa_lab.http import PublishError
 from mining_qa_lab.qa_status import GatePublisher
+from mining_qa_lab.reruns import QaStatusRerunError, _claim
 from mining_qa_lab.testcode import TestcodeInstallation
 from mining_qa_lab.ui import render_page
 
@@ -150,6 +151,24 @@ class ConfigStoreTest(unittest.TestCase):
                 "qa_status",
             )
 
+    def test_qa_status_rerun_polling_is_explicitly_opt_in(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            document = configuration(Path(directory))
+            normalized = validate_config(document)
+            self.assertFalse(normalized["qa_status"]["reruns_enabled"])
+
+            document["qa_status"] = {
+                "enabled": True,
+                "reruns_enabled": True,
+                "base_url": "https://qa.example",
+                "token_env": "TEST_QA_TOKEN",
+            }
+            self.assertTrue(validate_config(document)["qa_status"]["reruns_enabled"])
+
+            document["qa_status"]["reruns_enabled"] = "yes"
+            with self.assertRaisesRegex(ConfigError, "reruns_enabled must be boolean"):
+                validate_config(document)
+
     def test_validates_artifact_deployment_and_module_profile_override(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             document = configuration(Path(directory))
@@ -229,6 +248,216 @@ class ConfigStoreTest(unittest.TestCase):
             }
             with self.assertRaisesRegex(ConfigError, "must not overlap"):
                 validate_config(invalid)
+
+
+class RemoteRerunTest(unittest.TestCase):
+    @staticmethod
+    def terminal_run(root: Path) -> tuple[OrchestratorDatabase, dict, list[dict]]:
+        config = validate_config(configuration(root))
+        database = OrchestratorDatabase(root / "state.sqlite3")
+        event, _ = database.create_event(
+            event_key="manual:rerun-source",
+            repository_id="firmware",
+            trigger_type="manual",
+            commit_sha="a" * 40,
+            branch="main",
+        )
+        run, _ = database.create_gate_run(
+            gate_id="firmware-smoke",
+            event=event,
+            definition_digest="b" * 64,
+            required_policy="all",
+            assignments=[
+                {
+                    "setup_id": "bench",
+                    "module_id": "smoke",
+                    "platform_key": "bitaxe-bonanza-1002",
+                },
+                {
+                    "setup_id": "bench",
+                    "module_id": "regression",
+                    "platform_key": "bitaxe-bonanza-1002",
+                },
+            ],
+            config_snapshot=config,
+        )
+        assignments = database.assignments(run["id"])
+        database.acquire(assignments[0]["id"], [])
+        database.acquire(assignments[1]["id"], [])
+        database.finish_assignment(assignments[0]["id"], status="passed")
+        database.finish_assignment(assignments[1]["id"], status="failed")
+        database.update_gate_run(
+            run["id"],
+            status="failed",
+            qa_result_id="12f10026-a596-4567-860f-f238ff394912",
+        )
+        return database, database.gate_run(run["id"]), assignments
+
+    @staticmethod
+    def request(run: dict, *, request_id: str, mode: str, assignment_ids: list[str]) -> dict:
+        return {
+            "id": request_id,
+            "claim_token": "457eb7df-a3f8-42fb-b9dd-01cfebbc4815",
+            "gate_run_id": run["qa_result_id"],
+            "external_run_id": run["id"],
+            "repository": "owner/firmware",
+            "gate_key": "firmware-smoke",
+            "commit_sha": "a" * 40,
+            "mode": mode,
+            "assignment_ids": assignment_ids,
+        }
+
+    def test_selected_remote_rerun_is_atomic_and_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database, run, assignments = self.terminal_run(Path(directory))
+            request = self.request(
+                run,
+                request_id="c21fd938-04ed-4e28-9f16-24ec933931c4",
+                mode="assignments",
+                assignment_ids=[assignments[0]["id"]],
+            )
+
+            first = database.apply_remote_rerun(request)
+            self.assertTrue(first["applied"])
+            updated = database.gate_run(run["id"])
+            self.assertEqual(updated["status"], "queued")
+            self.assertEqual(updated["assignments"][0]["status"], "queued")
+            self.assertEqual(updated["assignments"][1]["status"], "failed")
+            self.assertEqual(updated["assignments"][0]["attempt"], 1)
+
+            self.assertTrue(database.acquire(assignments[0]["id"], []))
+            second = database.apply_remote_rerun(request)
+            self.assertFalse(second["applied"])
+            self.assertEqual(
+                database.gate_run(run["id"])["assignments"][0]["status"],
+                "running",
+            )
+            with self.assertRaisesRegex(ValueError, "assignments changed"):
+                database.apply_remote_rerun(
+                    {**request, "assignment_ids": [assignments[1]["id"]]}
+                )
+            database.close()
+
+    def test_whole_gate_remote_rerun_requeues_every_assignment(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database, run, assignments = self.terminal_run(Path(directory))
+            result = database.apply_remote_rerun(
+                self.request(
+                    run,
+                    request_id="26407f75-c2f6-4f2f-856f-b7ad31f02c97",
+                    mode="all",
+                    assignment_ids=[],
+                )
+            )
+
+            self.assertTrue(result["applied"])
+            rerun = database.gate_run(run["id"])
+            self.assertEqual(
+                [item["status"] for item in rerun["assignments"]],
+                ["queued", "queued"],
+            )
+            self.assertEqual([item["attempt"] for item in rerun["assignments"]], [1, 1])
+            database.close()
+
+    def test_claim_response_validation_is_bounded_and_typed(self) -> None:
+        request = _claim(
+            {
+                "request": {
+                    "id": "26407f75-c2f6-4f2f-856f-b7ad31f02c97",
+                    "claim_token": "457eb7df-a3f8-42fb-b9dd-01cfebbc4815",
+                    "gate_run_id": "12f10026-a596-4567-860f-f238ff394912",
+                    "external_run_id": "local-run",
+                    "repository": "owner/firmware",
+                    "gate_key": "firmware-smoke",
+                    "commit_sha": "a" * 40,
+                    "mode": "assignments",
+                    "assignment_ids": ["assignment-1", "assignment-1"],
+                }
+            }
+        )
+        self.assertEqual(request["assignment_ids"], ["assignment-1"])
+        with self.assertRaisesRegex(QaStatusRerunError, "invalid assignments"):
+            _claim({"request": {**request, "assignment_ids": ["x"] * 101}})
+
+    def test_remote_rerun_rejects_mismatch_and_active_target(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database, run, assignments = self.terminal_run(Path(directory))
+            mismatched = self.request(
+                run,
+                request_id="970c59f6-fc6e-4e52-81ce-8c8ecac51c07",
+                mode="all",
+                assignment_ids=[],
+            )
+            mismatched["commit_sha"] = "c" * 40
+            with self.assertRaisesRegex(ValueError, "commit"):
+                database.apply_remote_rerun(mismatched)
+
+            database.retry_gate_run(run["id"])
+            with self.assertRaisesRegex(ValueError, "active"):
+                database.apply_remote_rerun(
+                    self.request(
+                        run,
+                        request_id="c7e3cb55-d728-4846-a5ad-acd2cb33305b",
+                        mode="all",
+                        assignment_ids=[],
+                    )
+                )
+            self.assertEqual(
+                {item["status"] for item in database.assignments(run["id"])},
+                {"passed", "queued"},
+            )
+            database.close()
+
+    def test_engine_claims_only_configured_targets_and_resolves_acceptance(self) -> None:
+        class Client:
+            def __init__(self, request: dict) -> None:
+                self.request = request
+                self.resolutions: list[tuple] = []
+
+            def claim(self, config, targets):
+                self.assert_targets(targets)
+                value, self.request = self.request, None
+                return value
+
+            @staticmethod
+            def assert_targets(targets):
+                if targets != [
+                    {"repository": "owner/firmware", "gate_key": "firmware-smoke"}
+                ]:
+                    raise AssertionError(targets)
+
+            def resolve(self, config, request_id, claim_token, outcome, detail=None):
+                self.resolutions.append(
+                    (request_id, claim_token, outcome, detail)
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database, run, assignments = self.terminal_run(root)
+            document = configuration(root)
+            document["qa_status"] = {
+                "enabled": True,
+                "reruns_enabled": True,
+                "base_url": "https://qa.example",
+                "token_env": "TEST_QA_TOKEN",
+            }
+            path = root / "orchestrator.yaml"
+            path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            engine = OrchestratorEngine(ConfigStore(path), database)
+            client = Client(
+                self.request(
+                    run,
+                    request_id="878ee57b-6089-4a35-bf25-6beb211840a8",
+                    mode="assignments",
+                    assignment_ids=[assignments[1]["id"]],
+                )
+            )
+            engine.rerun_client = client  # type: ignore[assignment]
+
+            self.assertEqual(engine.poll_reruns(), 1)
+            self.assertEqual(client.resolutions[0][2], "accepted")
+            self.assertEqual(database.assignments(run["id"])[1]["status"], "queued")
+            database.close()
 
 
 class SchedulingTest(unittest.TestCase):

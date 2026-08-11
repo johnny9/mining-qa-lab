@@ -50,6 +50,8 @@
 - Terminal assignment transition releases its leases.
 - Startup recovery never reports interrupted running work as passed or queued.
 - Retry is explicit and preserves the prior attempt/history context.
+- A remote rerun records its request ID in the same transaction that requeues
+  exact selected assignments, so claim redelivery cannot reapply the mutation.
 - Artifact rows and archive directories remain attempt-specific; retry never
   overwrites a prior attempt's retained evidence.
 

@@ -52,6 +52,8 @@
 - Manual request provenance includes selected project, device types, and source
   resolution alongside requester and authorization source.
 - Parent external identity is stable for the local gate run.
+- The stored public parent UUID and stable local external ID are both required
+  when validating a remotely requested rerun.
 - Child result ID/URL comes from the runner result pointer and is linked to the
   correct assignment.
 

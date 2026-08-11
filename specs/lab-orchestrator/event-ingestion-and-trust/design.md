@@ -86,6 +86,8 @@ later poll. Exact approval failure creates no event.
 
 New event sources must map into the same normalized exact-commit contract and
 define cursor, replay, authentication, and first-poll behavior.
+Remote rerun requests are intentionally a separate leased queue: they requeue a
+known exact run and do not create or advance source events/cursors.
 
 ## Resource and operational constraints
 

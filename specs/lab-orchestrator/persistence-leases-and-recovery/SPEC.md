@@ -13,6 +13,8 @@ interrupted work into explicit fail-closed states.
 
 ## Changelog
 
+- 2026-08-10: Added transactional remote-request idempotency for selected or
+  whole-gate requeueing without overwriting attempt evidence.
 - 2026-08-10: Persisted archived artifact metadata per assignment attempt while
   keeping immutable attempt files outside SQLite.
 - 2026-08-10: Linked external durable state, graceful restart, and fail-closed

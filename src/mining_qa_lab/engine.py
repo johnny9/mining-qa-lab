@@ -17,6 +17,7 @@ from .events import EventCollector, paths_match
 from .firmware import FirmwareDeployer
 from .http import PublishError
 from .qa_status import GatePublisher
+from .reruns import QaStatusRerunClient
 from .testcode import TestcodeInstaller
 
 logger = logging.getLogger(__name__)
@@ -450,11 +451,58 @@ class OrchestratorEngine:
         self.collector = EventCollector(database)
         self.planner = Planner(database)
         self.publisher = GatePublisher(config_store.snapshot.document["qa_status"])
+        self.rerun_client = QaStatusRerunClient()
         self.executor = AssignmentExecutor(database, config_store, self.publisher)
+
+    def poll_reruns(self) -> int:
+        config = self.config_store.snapshot.document
+        qa_status = config["qa_status"]
+        if not qa_status.get("enabled") or not qa_status.get("reruns_enabled"):
+            return 0
+        targets = sorted(
+            {
+                (
+                    config["repositories"][gate["repository"]]["repository"],
+                    gate_id,
+                )
+                for gate_id, gate in config["gates"].items()
+            }
+        )
+        if not targets:
+            return 0
+        if len(targets) > 100:
+            raise ConfigError("QA Status rerun polling supports at most 100 gate targets")
+        request = self.rerun_client.claim(
+            qa_status,
+            [
+                {"repository": repository, "gate_key": gate_key}
+                for repository, gate_key in targets
+            ],
+        )
+        if request is None:
+            return 0
+        try:
+            self.database.apply_remote_rerun(request)
+        except ValueError as exc:
+            self.rerun_client.resolve(
+                qa_status,
+                request["id"],
+                request["claim_token"],
+                "rejected",
+                str(exc),
+            )
+            return 1
+        self.rerun_client.resolve(
+            qa_status,
+            request["id"],
+            request["claim_token"],
+            "accepted",
+        )
+        return 1
 
     def poll(self) -> int:
         config = self.config_store.snapshot.document
-        created = 0
+        created = self.poll_reruns()
         for repository_id, repository in config["repositories"].items():
             created += self.collector.poll_repository(
                 repository_id,

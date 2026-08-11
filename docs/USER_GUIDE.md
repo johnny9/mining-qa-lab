@@ -169,6 +169,19 @@ For a normal production setup, enable the `qa_status` integration.
 The local copy never counts as successful remote publication. If required
 publication is missing, the assignment is reported as an error.
 
+### Reruns requested from Status
+
+`qa_status.reruns_enabled` is false by default. Enable it only after Mining QA
+Status has the rerun-queue migration and the lab's token has the dedicated
+`gates:reruns:consume` scope. Existing publisher tokens are intentionally
+insufficient.
+
+On each normal poll the lab claims at most one request matching a configured
+public repository/gate. It requeues work only when the public parent UUID,
+stable local run ID, repository, gate, exact commit, assignment IDs, and local
+terminal state all match. A request never supplies private setup/device data or
+interrupts active work. Disable the flag to stop consumption safely.
+
 ## API access
 
 The exact OpenAPI document is available at:

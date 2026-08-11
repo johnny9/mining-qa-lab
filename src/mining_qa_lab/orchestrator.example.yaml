@@ -15,6 +15,7 @@ controller:
 
 qa_status:
   enabled: false
+  reruns_enabled: false
   base_url: https://mining-qa-status.vercel.app
   token_env: MINING_QA_TOKEN
 

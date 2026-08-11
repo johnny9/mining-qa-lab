@@ -219,6 +219,11 @@ def validate_config(document: Mapping[str, Any]) -> dict[str, Any]:
 
     qa = _mapping(raw.setdefault("qa_status", {}), "qa_status")
     qa.setdefault("enabled", False)
+    qa.setdefault("reruns_enabled", False)
+    if not isinstance(qa["reruns_enabled"], bool):
+        raise ConfigError("qa_status.reruns_enabled must be boolean")
+    if qa["reruns_enabled"] and not qa["enabled"]:
+        raise ConfigError("qa_status.reruns_enabled requires qa_status.enabled")
     if qa["enabled"]:
         base_url = _string(qa.get("base_url"), "qa_status.base_url")
         if not base_url.startswith(("http://", "https://")):

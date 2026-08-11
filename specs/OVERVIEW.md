@@ -13,7 +13,7 @@ and result provenance.
 |---|---|---|
 | [`mining-qa-lab`](https://github.com/johnny9/mining-qa-lab) | event trust, gates, lab inventory, leases, firmware deployment, runner installation/execution, private artifact redundancy, parent results | test cases, device cleanup, detailed evidence publication |
 | [`mining-qa-testcode`](https://github.com/johnny9/mining-qa-testcode) | test selection, device adapters/lifecycle, cleanup, detailed evidence, privacy, child results | repository event trust, lab scheduling, shared leases |
-| [`mining-qa-status`](https://github.com/johnny9/mining-qa-status) | external collection, presentation, GitHub integration, stored parent/child results | lab credentials, device control, test execution |
+| [`mining-qa-status`](https://github.com/johnny9/mining-qa-status) | external collection, presentation, GitHub integration, stored parent/child results, authenticated rerun intent | lab credentials, device control, test execution |
 
 The lab does not bundle the testcode package. It installs an exact configured
 testcode revision into a separate worker checkout/virtual environment and
@@ -40,6 +40,8 @@ invokes its CLI through the versioned
   and exact-SHA pull-request approval.
 - Idempotent planning, setup/module matrices, stale queued-work supersession,
   SQLite WAL persistence, leases, retry, cancellation, and fail-closed recovery.
+- Opt-in polling of authenticated Status rerun requests with exclusive remote
+  claims and exact, idempotent local requeue validation.
 - Lab inventory, compatibility checks, USB identity, preflight, and diagnostics.
 - Exact successful-build artifact resolution and board-verified ESP-Miner OTA.
 - Latest configured testcode branch resolution with an immutable per-gate/host
@@ -58,6 +60,8 @@ invokes its CLI through the versioned
 flowchart LR
     E["GitHub or QA Status events"] --> L["mining-qa-lab"]
     O["Schedules and operator requests"] --> L
+    U["Authenticated Status rerun intent"] --> Q
+    Q -->|"leased public run identity"| L
     L -->|"resolve and install exact SHA"| T["mining-qa-testcode worker"]
     L -->|"optional verified OTA"| D["Mining device"]
     T -->|"test and guaranteed cleanup"| D
@@ -84,6 +88,8 @@ detailed published child result.
 
 - **Trust:** first observation establishes a cursor baseline; PR approval names
   one exact revalidated SHA; newer heads cannot interrupt active cleanup.
+- **Remote reruns:** Status stores user intent; the lab retains final authority
+  and accepts it only when public and private run identities match exactly.
 - **Safety:** all setup resources are leased before work; deployment fails
   closed; service restart is not proof of hardware cleanup.
 - **Security/privacy:** secrets are environment-only; SSH agent forwarding is
@@ -116,3 +122,5 @@ detailed published child result.
 - 2026-08-10: Added exact per-gate/host testcode resolution and installation.
 - 2026-08-10: Added manual source/device targeting and private local artifact
   redundancy while preserving Mining QA child and parent publication.
+- 2026-08-10: Specified authenticated Status rerun requests and an exclusive,
+  opt-in lab polling contract.

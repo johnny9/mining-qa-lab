@@ -10,6 +10,7 @@ overall gate result.
 ```mermaid
 flowchart LR
     A["Approved code change<br/>or manual request"] --> L["mining-qa-lab"]
+    S -->|"leased authenticated rerun intent"| L
     L -->|"reserve devices and start"| T["mining-qa-testcode"]
     T -->|"test and restore"| D["Mining device"]
     T -->|"detailed result"| S["mining-qa-status"]
@@ -21,6 +22,7 @@ flowchart LR
 The lab service:
 
 - watches configured projects and accepts scheduled or manual requests;
+- can opt in to exact, idempotent rerun requests from authenticated Status users;
 - gives each active test exclusive access to its lab devices;
 - can install an exact test runner revision and an approved firmware build;
 - records runs, worker logs, and recovery state;
@@ -29,6 +31,26 @@ The lab service:
 
 The status service never receives lab passwords, private device addresses, USB
 paths, or commands that control hardware.
+
+## Reruns requested from Mining QA Status
+
+Rerun polling is off by default. After the compatible Status migration is
+deployed and a super admin issues a token with `gates:reruns:consume`, install
+that token in the configured `qa_status.token_env` and enable:
+
+```yaml
+qa_status:
+  enabled: true
+  reruns_enabled: true
+  base_url: https://mining-qa-status.vercel.app
+  token_env: MINING_QA_TOKEN
+```
+
+The lab advertises only its configured public repository/gate pairs, claims one
+matching request per poll, and refuses to requeue until public parent ID, local
+run ID, gate, repository, exact commit, assignments, and terminal state all
+match. Disable `reruns_enabled` to stop consuming requests without deleting
+queue or local audit state.
 
 ## Quick start
 

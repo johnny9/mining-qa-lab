@@ -104,11 +104,22 @@ create table if not exists publications (
     updated_at real not null
 );
 
+create table if not exists remote_rerun_requests (
+    request_id text primary key,
+    public_gate_run_id text not null,
+    local_gate_run_id text not null references gate_runs(id) on delete cascade,
+    mode text not null,
+    assignment_ids text not null,
+    applied_at real not null
+);
+
 create index if not exists events_unplanned_idx on events(planned_at, created_at);
 create index if not exists gate_runs_status_idx on gate_runs(status, created_at);
 create index if not exists assignments_status_idx on assignments(status, created_at);
 create index if not exists assignment_artifacts_assignment_idx
     on assignment_artifacts(assignment_id, attempt, relative_path);
+create index if not exists remote_rerun_requests_run_idx
+    on remote_rerun_requests(local_gate_run_id, applied_at);
 """
 
 
@@ -581,3 +592,102 @@ class OrchestratorDatabase:
                     (run_id,),
                 )
         return self.gate_run(run_id)
+
+    def apply_remote_rerun(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        request_id = str(request["id"])
+        run_id = str(request["external_run_id"])
+        with self.transaction() as connection:
+            existing = connection.execute(
+                "select * from remote_rerun_requests where request_id = ?",
+                (request_id,),
+            ).fetchone()
+            if existing:
+                if (
+                    existing["public_gate_run_id"] != request.get("gate_run_id")
+                    or existing["local_gate_run_id"] != run_id
+                    or existing["mode"] != request.get("mode")
+                ):
+                    raise ValueError("public rerun request identity changed after application")
+                if request.get("mode") == "assignments" and json.loads(
+                    existing["assignment_ids"]
+                ) != list(dict.fromkeys(request.get("assignment_ids") or [])):
+                    raise ValueError("public rerun request assignments changed after application")
+                run_id = existing["local_gate_run_id"]
+                applied = False
+            else:
+                row = connection.execute(
+                    "select * from gate_runs where id = ?", (run_id,)
+                ).fetchone()
+                if row is None:
+                    raise ValueError("public rerun references an unknown local run")
+                run = dict(row)
+                if run.get("qa_result_id") != request.get("gate_run_id"):
+                    raise ValueError("public rerun parent identity does not match local state")
+                if run["gate_id"] != request.get("gate_key"):
+                    raise ValueError("public rerun gate does not match local state")
+                if run["commit_sha"] != request.get("commit_sha"):
+                    raise ValueError("public rerun commit does not match local state")
+                snapshot = json.loads(run["config_snapshot"])
+                repository = snapshot.get("repositories", {}).get(run["repository_id"], {})
+                if repository.get("repository") != request.get("repository"):
+                    raise ValueError("public rerun repository does not match local state")
+                if run["status"] not in {"passed", "failed", "error", "cancelled"}:
+                    raise ValueError("public rerun local run is active or not eligible")
+
+                assignment_rows = connection.execute(
+                    "select id, status from assignments where gate_run_id = ? order by created_at",
+                    (run_id,),
+                ).fetchall()
+                assignments = {item["id"]: item["status"] for item in assignment_rows}
+                if request.get("mode") == "all":
+                    target_ids = list(assignments)
+                elif request.get("mode") == "assignments":
+                    target_ids = list(dict.fromkeys(request.get("assignment_ids") or []))
+                    if not target_ids or any(item not in assignments for item in target_ids):
+                        raise ValueError("public rerun assignment does not match local state")
+                else:
+                    raise ValueError("public rerun mode is invalid")
+                if not target_ids:
+                    raise ValueError("public rerun has no local assignments")
+                if any(assignments[item] in {"queued", "running"} for item in target_ids):
+                    raise ValueError("public rerun cannot interrupt active assignments")
+
+                assignment_update = """
+                    update assignments set status = 'queued', detail = null,
+                        result_pointer = null, qa_result_id = null, qa_result_url = null,
+                        started_at = null, finished_at = null
+                    where gate_run_id = ?
+                """
+                parameters: tuple[Any, ...] = (run_id,)
+                if request.get("mode") == "assignments":
+                    placeholders = ",".join("?" for _ in target_ids)
+                    assignment_update += f" and id in ({placeholders})"
+                    parameters = (run_id, *target_ids)
+                connection.execute(assignment_update, parameters)
+                if connection.execute("select changes()").fetchone()[0] != len(target_ids):
+                    raise ValueError("public rerun assignments changed during validation")
+                connection.execute(
+                    """
+                    update gate_runs set status = 'queued', summary = null,
+                        started_at = null, finished_at = null where id = ?
+                    """,
+                    (run_id,),
+                )
+                connection.execute(
+                    """
+                    insert into remote_rerun_requests(
+                        request_id, public_gate_run_id, local_gate_run_id, mode,
+                        assignment_ids, applied_at
+                    ) values (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        request_id,
+                        request["gate_run_id"],
+                        run_id,
+                        request["mode"],
+                        json.dumps(target_ids),
+                        time.time(),
+                    ),
+                )
+                applied = True
+        return {"applied": applied, "run": self.gate_run(run_id)}

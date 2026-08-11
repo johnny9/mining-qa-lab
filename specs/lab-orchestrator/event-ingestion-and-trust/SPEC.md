@@ -13,6 +13,8 @@ into idempotent durable source events.
 
 ## Changelog
 
+- 2026-08-10: Kept leased remote reruns separate from append-only source event
+  and cursor semantics.
 - 2026-08-10: Added manual project/source/device-type provenance and automatic
   exact-head resolution from configured `main`, then `master`.
 - 2026-08-10: Defined source cursors, first-poll baseline, trusted contributor

@@ -9,6 +9,8 @@ feature directory.
   [Configuration and control plane](lab-orchestrator/configuration-and-control-plane/SPEC.md)
 - Convert trusted events and exact-SHA approvals without broadening authority →
   [Event ingestion and trust](lab-orchestrator/event-ingestion-and-trust/SPEC.md)
+- Turn authenticated public rerun intent into exact, idempotent local work →
+  [Remote rerun requests](lab-orchestrator/remote-rerun-requests/SPEC.md)
 - Expand a gate deterministically and retire stale queued PR heads →
   [Gate planning and supersession](lab-orchestrator/gate-planning-and-supersession/SPEC.md)
 
