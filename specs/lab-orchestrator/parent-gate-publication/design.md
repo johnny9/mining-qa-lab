@@ -102,6 +102,7 @@ Detailed evidence remains in children to keep parent compact.
 | [Assignment execution](../assignment-execution/SPEC.md) | Supplies durable status and child ID/URL. |
 | [Result model and publishing](https://github.com/johnny9/mining-qa-testcode/blob/main/specs/test-runner/result-model-and-publishing/SPEC.md) | Runner owns detailed child publication. |
 | [Artifacts, privacy, and provenance](https://github.com/johnny9/mining-qa-testcode/blob/main/specs/test-runner/artifacts-privacy-and-provenance/SPEC.md) | Detailed evidence stays sanitized in child records. |
+| [Central coordination agent](../central-coordination-agent/SPEC.md) | Central mode publishes one per-Lab completion to the Status-owned global gate instead of creating a local parent. |
 
 ## Verification approach
 

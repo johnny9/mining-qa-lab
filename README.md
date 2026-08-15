@@ -100,8 +100,10 @@ links.
   gates, and view local artifacts.
 - [Deployment guide](docs/ORCHESTRATOR_DEPLOYMENT.md): install, update, check,
   and roll back the systemd service.
-- [Orchestration contract](contracts/orchestration-v1.md): versioned interface
-  between the lab and testcode.
+- [Orchestration v1](contracts/orchestration-v1.md) and
+  [v2](contracts/orchestration-v2.md): versioned Lab/Testcode interfaces.
+- [Lab coordination v2](contracts/lab-coordination-v2.md): proposed private
+  Status/Lab agent interface.
 - [Specifications](specs/README.md): implementation behavior and project
   boundaries.
 - [Agent instructions](AGENTS.md): repository rules for automated contributors.

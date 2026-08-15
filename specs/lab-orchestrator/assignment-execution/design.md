@@ -125,6 +125,8 @@ Process/SSH/pointer waits, logs, and stored error details are bounded.
 | [Configuration and selection](https://github.com/johnny9/mining-qa-testcode/blob/main/specs/test-runner/configuration-and-selection/SPEC.md) | Runner consumes selected profile/pattern/devices. |
 | [Result model and publishing](https://github.com/johnny9/mining-qa-testcode/blob/main/specs/test-runner/result-model-and-publishing/SPEC.md) | Defines child-result pointer and publisher identity. |
 | [Orchestration contract v1](../../../contracts/orchestration-v1.md) | Defines the versioned process, environment, metadata, size, and pointer boundary. |
+| [Orchestration contract v2](../../../contracts/orchestration-v2.md) | Adds strict distributed correlation through a reader-first migration. |
+| [Central coordination agent](../central-coordination-agent/SPEC.md) | Supplies centrally originated v2 attempts while preserving this execution boundary. |
 
 ## Verification approach
 

@@ -20,6 +20,13 @@ testcode revision into a separate worker checkout/virtual environment and
 invokes its CLI through the versioned
 [orchestration contract](../contracts/orchestration-v1.md).
 
+The proposed distributed mode adds an explicit outbound
+[central coordination agent](lab-orchestrator/central-coordination-agent/SPEC.md).
+In that mode Status owns portable project/suite/gate/trigger revisions, frozen
+Lab eligibility, and global advisory aggregation. The Lab still owns private
+binding, authorization, leases, execution, and cleanup. Existing local mode
+remains independently supported during migration.
+
 ## Actors
 
 - **Lab operators** maintain private hosts, devices, setups, trust policy,
@@ -42,6 +49,8 @@ invokes its CLI through the versioned
   SQLite WAL persistence, leases, retry, cancellation, and fail-closed recovery.
 - Opt-in polling of authenticated Status rerun requests with exclusive remote
   claims and exact, idempotent local requeue validation.
+- Proposed explicit central mode with sanitized registration, portable/private
+  binding, immutable attempt history, pull claims, and restart-safe completion.
 - Lab inventory, compatibility checks, USB identity, preflight, and diagnostics.
 - Exact successful-build artifact resolution and board-verified ESP-Miner OTA.
 - Latest configured testcode branch resolution with an immutable per-gate/host
@@ -68,6 +77,8 @@ flowchart LR
     T -->|"detailed child result"| Q["mining-qa-status"]
     T -->|"v1 result pointer and artifact manifest"| L
     L -->|"parent gate and child links"| Q
+    Q -->|"v2 portable offers and claims"| L
+    L -->|"v2 per-Lab completion"| Q
 ```
 
 ## Cross-repository contract
@@ -83,6 +94,16 @@ artifact manifest. The lab validates it, uses its status for gate aggregation,
 records a returned child URL/ID, and privately archives only hash-verified
 manifest entries. It never uses archived artifacts to recreate or replace a
 detailed published child result.
+
+Distributed mode uses two separately versioned contracts:
+
+- [Lab coordination v2](../contracts/lab-coordination-v2.md) between Status and
+  Lab;
+- [orchestration v2](../contracts/orchestration-v2.md) between Lab and Testcode.
+
+The full correlation chain keeps central gate, Lab execution, private local
+run, assignment, attempt, and runner identities distinct. Readers ship before
+writers and v1 remains available during the compatibility window.
 
 ## Cross-cutting constraints
 
@@ -113,6 +134,8 @@ detailed published child result.
 
 ## Changelog
 
+- 2026-08-14: Specified proposed distributed central mode, dual v2 contracts,
+  private binding, immutable attempts, and Status-owned local integration.
 - 2026-08-10: Expanded repository-owned skills to cover first service setup,
   exact-SHA updates, device onboarding, and gate creation.
 - 2026-08-10: Split the lab orchestrator from `mining-qa-testcode`, documented

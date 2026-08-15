@@ -13,6 +13,8 @@ immutable child-result links without duplicating detailed test artifacts.
 
 ## Changelog
 
+- 2026-08-14: Clarified that proposed central mode submits per-Lab completion
+  while existing local mode retains parent-gate publication.
 - 2026-08-10: Made both the public parent UUID and stable local external ID
   required rerun-correlation inputs.
 - 2026-08-10: Clarified that the private lab archive is additive redundancy and

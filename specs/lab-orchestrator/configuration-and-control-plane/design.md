@@ -97,6 +97,7 @@ mutations are serialized by the store lock.
 | [Operator API and UI](../operator-api-and-ui/SPEC.md) | Exposes revision-checked control surfaces. |
 | [Service deployment](../service-deployment/SPEC.md) | Keeps private YAML outside releases and aligns configured writable paths with the service sandbox. |
 | [Configuration and selection](https://github.com/johnny9/mining-qa-testcode/blob/main/specs/test-runner/configuration-and-selection/SPEC.md) | Runner profiles referenced by modules/setups remain a separate schema. |
+| [Central coordination agent](../central-coordination-agent/SPEC.md) | Proposes explicit mode, Status client policy, and private requirement bindings as a versioned schema extension. |
 
 ## Verification approach
 

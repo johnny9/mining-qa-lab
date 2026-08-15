@@ -11,6 +11,9 @@ feature directory.
   [Event ingestion and trust](lab-orchestrator/event-ingestion-and-trust/SPEC.md)
 - Turn authenticated public rerun intent into exact, idempotent local work →
   [Remote rerun requests](lab-orchestrator/remote-rerun-requests/SPEC.md)
+- Pull a distributed portable gate, keep its binding private, and return one
+  correlated Lab completion →
+  [Central coordination agent](lab-orchestrator/central-coordination-agent/SPEC.md)
 - Expand a gate deterministically and retire stale queued PR heads →
   [Gate planning and supersession](lab-orchestrator/gate-planning-and-supersession/SPEC.md)
 

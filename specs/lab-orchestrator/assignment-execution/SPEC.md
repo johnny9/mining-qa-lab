@@ -13,6 +13,8 @@ environment, command, log, timeout, deployment, and child-result correlation.
 
 ## Changelog
 
+- 2026-08-14: Linked the proposed orchestration-v2 reader/writer migration and
+  immutable distributed correlation chain.
 - 2026-08-10: Added bounded, hash-verified local archival of manifest-listed
   child artifacts without weakening required Mining QA publication.
 - 2026-08-10: Split execution from the testcode repository and established a

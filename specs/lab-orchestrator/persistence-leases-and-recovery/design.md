@@ -99,6 +99,7 @@ and hardware operations never run while holding a write transaction.
 | [Parent gate publication](../parent-gate-publication/SPEC.md) | Reads durable aggregate state. |
 | [Lifecycle and cleanup](https://github.com/johnny9/mining-qa-testcode/blob/main/specs/test-runner/lifecycle-and-cleanup/SPEC.md) | Runner cleanup is distinct from orchestrator lease release. |
 | [Service deployment](../service-deployment/SPEC.md) | Preserves external SQLite state across exact-release cutover and invokes fail-closed recovery after interruption. |
+| [Central coordination agent](../central-coordination-agent/SPEC.md) | Requires immutable attempts, central execution uniqueness, claim/outbox persistence, and restart-safe completion. |
 
 ## Verification approach
 

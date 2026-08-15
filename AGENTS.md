@@ -72,7 +72,9 @@ Installable project skills live under `skills/` and are governed by
 - `README.md`: short project introduction, relationships, and quick start.
 - `docs/*.md`: plain-language user manuals for operators. Keep internal
   behavior, safety contracts, and agent instructions in specs or this file.
-- `contracts/orchestration-v1.md`: versioned lab/testcode process boundary.
+- `contracts/orchestration-v1.md` and `contracts/orchestration-v2.md`:
+  versioned lab/testcode process boundaries.
+- `contracts/lab-coordination-v2.md`: proposed Status/lab-agent boundary.
 - `specs/OVERVIEW.md`: purpose, ownership, actors, and system context.
 - `specs/INDEX.md`: complete feature directory.
 - `specs/<area>/<feature>/SPEC.md` and companions: feature intent,
