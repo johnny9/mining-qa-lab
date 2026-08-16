@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from ipaddress import ip_network
 from pathlib import Path
 from typing import Any, Mapping
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -199,6 +200,78 @@ def validate_config(document: Mapping[str, Any]) -> dict[str, Any]:
             "controller.allowed_networks must not be empty when auth_mode is none"
         )
 
+    coordination = _mapping(raw.setdefault("coordination", {}), "coordination")
+    mode = coordination.setdefault("mode", "local")
+    if mode not in {"local", "central"}:
+        raise ConfigError("coordination.mode must be local or central")
+    central = _mapping(coordination.setdefault("central", {}), "coordination.central")
+    bindings = _mapping(raw.setdefault("bindings", {}), "bindings")
+    suite_bindings = _mapping(
+        bindings.setdefault("suite_requirements", {}),
+        "bindings.suite_requirements",
+    )
+    if mode == "central":
+        base_url = _string(central.get("base_url"), "coordination.central.base_url")
+        parsed_url = urlsplit(base_url)
+        loopback_names = {"127.0.0.1", "::1", "localhost"}
+        if parsed_url.scheme != "https" and not (
+            parsed_url.scheme == "http" and parsed_url.hostname in loopback_names
+        ):
+            raise ConfigError(
+                "coordination.central.base_url must use HTTPS except for loopback integration"
+            )
+        central["base_url"] = base_url.rstrip("/")
+        _identifier(central.get("lab_id"), "coordination.central.lab_id")
+        _string(
+            central.get("token_env", "MINING_QA_LAB_AGENT_TOKEN"),
+            "coordination.central.token_env",
+        )
+        for key, default, maximum in (
+            ("heartbeat_seconds", 30, 900),
+            ("poll_seconds", 10, 300),
+            ("request_timeout_seconds", 10, 120),
+        ):
+            value = central.setdefault(key, default)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not 0 < value <= maximum
+            ):
+                raise ConfigError(f"coordination.central.{key} must be positive and bounded")
+        subscriptions = _mapping(
+            central.setdefault("subscriptions", {}),
+            "coordination.central.subscriptions",
+        )
+        gates = _string_list(
+            subscriptions.get("gates"),
+            "coordination.central.subscriptions.gates",
+            required=True,
+        )
+        for index, gate in enumerate(gates):
+            _identifier(gate, f"coordination.central.subscriptions.gates[{index}]")
+        if not suite_bindings:
+            raise ConfigError(
+                "bindings.suite_requirements must not be empty in central mode"
+            )
+        for requirement_id, raw_binding in suite_bindings.items():
+            _identifier(requirement_id, "bindings.suite_requirements requirement id")
+            binding = _mapping(
+                raw_binding,
+                f"bindings.suite_requirements.{requirement_id}",
+            )
+            _absolute_path(
+                binding.get("profile"),
+                f"bindings.suite_requirements.{requirement_id}.profile",
+            )
+            _absolute_path(
+                binding.get("testcode_root"),
+                f"bindings.suite_requirements.{requirement_id}.testcode_root",
+            )
+            _string(
+                binding.get("mock_base_url_env", "MINING_QA_MOCK_URL"),
+                f"bindings.suite_requirements.{requirement_id}.mock_base_url_env",
+            )
+
     testcode = _mapping(raw.setdefault("testcode", {}), "testcode")
     testcode.setdefault("enabled", False)
     if not isinstance(testcode["enabled"], bool):
@@ -365,6 +438,10 @@ def validate_config(document: Mapping[str, Any]) -> dict[str, Any]:
         _string(setup.get("runner_profile"), f"lab.setups.{setup_id}.runner_profile")
 
     gates = _mapping(raw.setdefault("gates", {}), "gates")
+    if mode == "central" and (repositories or modules or gates):
+        raise ConfigError(
+            "central mode cannot merge centrally supplied work with local repositories, modules, or gates"
+        )
     for gate_id, value in gates.items():
         _identifier(gate_id, f"gates.{gate_id}")
         gate = _mapping(value, f"gates.{gate_id}")

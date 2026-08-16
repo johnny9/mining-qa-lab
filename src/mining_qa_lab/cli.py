@@ -31,6 +31,21 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("path", nargs="?", default="orchestrator.yaml")
     commands.add_parser("serve", help="run the REST API, web UI, watchers, and queue")
     commands.add_parser("poll-once", help="poll sources and plan newly observed events")
+    central = commands.add_parser(
+        "central-once",
+        help="announce, pull, and process one bounded central coordination page",
+    )
+    central.add_argument(
+        "--phase",
+        choices=("run", "claim-only", "reclaim"),
+        default="run",
+        help="integration recovery phase (loopback-only except run)",
+    )
+    central.add_argument(
+        "--replay-from-zero",
+        action="store_true",
+        help="replay the bounded work feed to validate duplicate suppression (loopback-only)",
+    )
     run = commands.add_parser("run", help="queue a manual gate run")
     run.add_argument("gate_id")
     run.add_argument("commit_sha")
@@ -63,6 +78,17 @@ def main(argv: list[str] | None = None) -> int:
             print(store.snapshot.revision)
             return 0
         database = _database(store)
+        if args.command == "central-once":
+            from .central import run_central_once
+
+            outcomes = run_central_once(
+                store,
+                database,
+                phase=args.phase,
+                replay_from_zero=args.replay_from_zero,
+            )
+            print(json.dumps({"outcomes": outcomes}, sort_keys=True))
+            return 0
         engine = OrchestratorEngine(store, database)
         if args.command == "poll-once":
             created = engine.poll()

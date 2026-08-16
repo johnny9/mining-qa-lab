@@ -113,6 +113,45 @@ create table if not exists remote_rerun_requests (
     applied_at real not null
 );
 
+create table if not exists central_executions (
+    lab_execution_id text primary key,
+    central_gate_run_id text not null,
+    lab_id text not null,
+    definition_digest text not null,
+    offer_json text not null,
+    state text not null,
+    claim_id text,
+    claim_generation integer,
+    claim_token text,
+    claim_expires_at text,
+    assignment_id text,
+    created_at real not null,
+    updated_at real not null,
+    unique(central_gate_run_id, lab_id)
+);
+
+create table if not exists central_attempts (
+    attempt_id text primary key,
+    lab_execution_id text not null references central_executions(lab_execution_id),
+    assignment_id text not null unique,
+    attempt integer not null,
+    state text not null,
+    started_at text not null,
+    completed_at text,
+    pointer_json text,
+    cleanup_disposition text,
+    unique(lab_execution_id, attempt)
+);
+
+create table if not exists central_outbox (
+    lab_execution_id text primary key references central_executions(lab_execution_id),
+    idempotency_key text not null unique,
+    body_json text not null,
+    state text not null,
+    response_code integer,
+    updated_at real not null
+);
+
 create index if not exists events_unplanned_idx on events(planned_at, created_at);
 create index if not exists gate_runs_status_idx on gate_runs(status, created_at);
 create index if not exists assignments_status_idx on assignments(status, created_at);
@@ -120,6 +159,8 @@ create index if not exists assignment_artifacts_assignment_idx
     on assignment_artifacts(assignment_id, attempt, relative_path);
 create index if not exists remote_rerun_requests_run_idx
     on remote_rerun_requests(local_gate_run_id, applied_at);
+create index if not exists central_executions_state_idx
+    on central_executions(lab_id, state, created_at);
 """
 
 
@@ -131,6 +172,7 @@ class OrchestratorDatabase:
         self._connection = sqlite3.connect(self.path, check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
         self._connection.executescript(SCHEMA)
+        self.path.chmod(0o600)
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
@@ -165,6 +207,215 @@ class OrchestratorDatabase:
                     updated_at = excluded.updated_at
                 """,
                 (source_key, value, etag, time.time()),
+            )
+
+    def persist_central_page(
+        self,
+        *,
+        lab_id: str,
+        cursor: str,
+        offers: list[Mapping[str, Any]],
+    ) -> None:
+        """Persist validated/rejected offers and the delivery cursor atomically."""
+
+        now = time.time()
+        with self.transaction() as connection:
+            for offer in offers:
+                execution_id = str(offer["lab_execution_id"])
+                connection.execute(
+                    """
+                    insert into central_executions(
+                        lab_execution_id, central_gate_run_id, lab_id,
+                        definition_digest, offer_json, state, created_at, updated_at
+                    ) values (?, ?, ?, ?, ?, 'received', ?, ?)
+                    on conflict(lab_execution_id) do nothing
+                    """,
+                    (
+                        execution_id,
+                        str(offer.get("central_gate_run_id", "invalid"))[:128],
+                        lab_id,
+                        str(offer.get("definition_digest", "0" * 64))[:64],
+                        json.dumps(dict(offer), sort_keys=True, separators=(",", ":"))[:65536],
+                        now,
+                        now,
+                    ),
+                )
+            connection.execute(
+                """
+                insert into source_cursors(source_key, value, etag, updated_at)
+                values (?, ?, null, ?)
+                on conflict(source_key) do update set
+                    value = excluded.value,
+                    updated_at = excluded.updated_at
+                """,
+                (f"central:{lab_id}", cursor, now),
+            )
+
+    def central_execution(self, execution_id: str) -> dict[str, Any] | None:
+        row = self._connection.execute(
+            "select * from central_executions where lab_execution_id = ?",
+            (execution_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        value = dict(row)
+        value["offer"] = json.loads(value.pop("offer_json"))
+        return value
+
+    def pending_central_executions(self, lab_id: str) -> list[dict[str, Any]]:
+        rows = self._connection.execute(
+            """
+            select * from central_executions
+            where lab_id = ? and state in ('received', 'claimed')
+            order by created_at, lab_execution_id
+            """,
+            (lab_id,),
+        ).fetchall()
+        values: list[dict[str, Any]] = []
+        for row in rows:
+            value = dict(row)
+            value["offer"] = json.loads(value.pop("offer_json"))
+            values.append(value)
+        return values
+
+    def update_central_execution(self, execution_id: str, **changes: Any) -> None:
+        allowed = {
+            "state",
+            "claim_id",
+            "claim_generation",
+            "claim_token",
+            "claim_expires_at",
+            "assignment_id",
+        }
+        invalid = set(changes) - allowed
+        if invalid:
+            raise ValueError(f"unsupported central execution fields: {sorted(invalid)}")
+        if not changes:
+            return
+        columns = ", ".join(f"{key} = ?" for key in changes)
+        with self.transaction() as connection:
+            connection.execute(
+                f"update central_executions set {columns}, updated_at = ? where lab_execution_id = ?",
+                (*changes.values(), time.time(), execution_id),
+            )
+
+    def start_central_attempt(
+        self,
+        *,
+        execution_id: str,
+        assignment_id: str,
+        attempt_id: str,
+        started_at: str,
+    ) -> tuple[dict[str, Any], bool]:
+        with self.transaction() as connection:
+            cursor = connection.execute(
+                """
+                insert into central_attempts(
+                    attempt_id, lab_execution_id, assignment_id, attempt,
+                    state, started_at
+                ) values (?, ?, ?, 1, 'running', ?)
+                on conflict(lab_execution_id, attempt) do nothing
+                """,
+                (attempt_id, execution_id, assignment_id, started_at),
+            )
+            created = cursor.rowcount == 1
+            row = connection.execute(
+                "select * from central_attempts where lab_execution_id = ? and attempt = 1",
+                (execution_id,),
+            ).fetchone()
+            connection.execute(
+                """
+                update central_executions
+                set assignment_id = ?, updated_at = ?
+                where lab_execution_id = ?
+                """,
+                (assignment_id, time.time(), execution_id),
+            )
+        return dict(row), created
+
+    def finish_central_attempt(
+        self,
+        *,
+        attempt_id: str,
+        state: str,
+        completed_at: str,
+        pointer: Mapping[str, Any],
+        cleanup_disposition: str,
+    ) -> None:
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                update central_attempts
+                set state = ?, completed_at = ?, pointer_json = ?, cleanup_disposition = ?
+                where attempt_id = ? and state = 'running'
+                """,
+                (
+                    state,
+                    completed_at,
+                    json.dumps(dict(pointer), sort_keys=True, separators=(",", ":")),
+                    cleanup_disposition,
+                    attempt_id,
+                ),
+            )
+
+    def central_attempts(self, execution_id: str) -> list[dict[str, Any]]:
+        rows = self._connection.execute(
+            "select * from central_attempts where lab_execution_id = ? order by attempt",
+            (execution_id,),
+        ).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            value = dict(row)
+            if value.get("pointer_json"):
+                value["pointer"] = json.loads(value.pop("pointer_json"))
+            result.append(value)
+        return result
+
+    def enqueue_central_completion(
+        self,
+        *,
+        execution_id: str,
+        idempotency_key: str,
+        body: Mapping[str, Any],
+    ) -> None:
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                insert into central_outbox(
+                    lab_execution_id, idempotency_key, body_json, state, updated_at
+                ) values (?, ?, ?, 'pending', ?)
+                on conflict(lab_execution_id) do nothing
+                """,
+                (
+                    execution_id,
+                    idempotency_key,
+                    json.dumps(dict(body), sort_keys=True, separators=(",", ":")),
+                    time.time(),
+                ),
+            )
+
+    def central_outbox(self, execution_id: str) -> dict[str, Any] | None:
+        row = self._connection.execute(
+            "select * from central_outbox where lab_execution_id = ?",
+            (execution_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        value = dict(row)
+        value["body"] = json.loads(value.pop("body_json"))
+        return value
+
+    def finish_central_outbox(
+        self, execution_id: str, *, state: str, response_code: int
+    ) -> None:
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                update central_outbox
+                set state = ?, response_code = ?, updated_at = ?
+                where lab_execution_id = ?
+                """,
+                (state, response_code, time.time(), execution_id),
             )
 
     def create_event(

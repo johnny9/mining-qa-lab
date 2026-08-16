@@ -24,6 +24,11 @@ dependencies = [
   "uvicorn>=0.34,<0.35",
 ]
 
+[project.optional-dependencies]
+test = [
+  "httpx>=0.28,<0.29",
+]
+
 [project.scripts]
 miner-orchestrator = "mining_qa_lab.cli:main"
 
