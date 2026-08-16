@@ -6,22 +6,22 @@
 |---|---|---|
 | Configuration validator | Enforce explicit mode, central client settings, secret references, and private bindings | `src/mining_qa_lab/config.py` |
 | Durable ledger | Persist executions, cursors, claims, snapshots, attempts, cleanup disposition, and outbox | `src/mining_qa_lab/database.py` |
-| Agent/worker engine | Heartbeat, pull, claim, renew, bind, execute, and flush completion | `src/mining_qa_lab/engine.py` |
-| Assignment boundary | Emit v2 metadata and consume the matching v2 pointer | `src/mining_qa_lab/engine.py` |
-| Operator surface | Show central versus local truth and safe pause/recovery controls | `src/mining_qa_lab/web.py` |
+| Agent/worker engine | Heartbeat, pull, claim, renew, bind, execute, and flush completion | `src/mining_qa_lab/central.py` |
+| Assignment boundary | Emit v2 metadata and consume the matching v2 pointer | `src/mining_qa_lab/central.py` |
+| Operator surface | Show central versus local truth and safe pause/recovery controls | planned integration into `src/mining_qa_lab/web.py` |
 
 ## Interfaces and contracts
 
 ### CLI
 
-- Existing service commands use the configured mode. `validate` rejects an
+- `central-once` processes one bounded page in central mode. `validate` rejects an
   incomplete or ambiguous central configuration without network mutation.
 - Pausing new central claims is an authenticated operator action and does not
   stop active cleanup.
 
 ### Configuration
 
-Target schema:
+Implemented proof-of-concept schema:
 
 ```yaml
 coordination:
@@ -38,8 +38,9 @@ coordination:
 bindings:
   suite_requirements:
     gamma-http-and-stratum:
-      setup: gamma-bench
-      profile: gamma-read-write
+      profile: /private/profiles/gamma-read-write.toml
+      testcode_root: /private/checkouts/mining-qa-testcode
+      mock_base_url_env: MINING_QA_MOCK_URL
 ```
 
 `mode` is `local` or `central` and defaults to `local`. Central mode requires
@@ -70,9 +71,10 @@ timeouts, and at least one subscription/binding for work to be accepted.
 
 ### Files, artifacts, payloads, and persistent state
 
-- Add central executions, pull cursor, claim generations, definition/source
+- `central_executions`, `central_attempts`, and `central_outbox` plus the shared
+  source cursor persist executions, pull position, claim generations, definition/source
   snapshots, private binding snapshots, assignment attempts, and outbox rows.
-- An assignment is stable work identity. `assignment_attempts` has immutable
+- An assignment is stable work identity. `central_attempts` has immutable
   `attempt_id`, number, state, timing, bounded detail, pointer, child identity,
   archive metadata, and cleanup disposition.
 - Raw worker/orchestrator logs and private archives remain local. Only the
