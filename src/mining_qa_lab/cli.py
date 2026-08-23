@@ -41,6 +41,15 @@ def build_parser() -> argparse.ArgumentParser:
         default="run",
         help="integration recovery phase (loopback-only except run)",
     )
+    central_agent = commands.add_parser(
+        "central-agent",
+        help="run the continuous central coordination agent with bounded backoff",
+    )
+    central_agent.add_argument(
+        "--max-cycles",
+        type=int,
+        help="stop after this many cycles (intended for validation)",
+    )
     central.add_argument(
         "--replay-from-zero",
         action="store_true",
@@ -88,6 +97,18 @@ def main(argv: list[str] | None = None) -> int:
                 replay_from_zero=args.replay_from_zero,
             )
             print(json.dumps({"outcomes": outcomes}, sort_keys=True))
+            return 0
+        if args.command == "central-agent":
+            from .central import run_central_forever
+
+            if args.max_cycles is not None and args.max_cycles < 1:
+                raise ConfigError("--max-cycles must be positive")
+            cycles = run_central_forever(
+                store,
+                database,
+                max_cycles=args.max_cycles,
+            )
+            print(json.dumps({"cycles": cycles}, sort_keys=True))
             return 0
         engine = OrchestratorEngine(store, database)
         if args.command == "poll-once":

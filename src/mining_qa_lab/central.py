@@ -6,6 +6,8 @@ import os
 import re
 import subprocess
 import sys
+import threading
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -231,6 +233,11 @@ class CentralSettings:
     subscriptions: tuple[str, ...]
     state_dir: Path
     bindings: Mapping[str, Mapping[str, Any]]
+    heartbeat_seconds: float
+    poll_seconds: float
+    retry_backoff_seconds: float
+    max_retry_backoff_seconds: float
+    max_attempts: int
 
     @classmethod
     def from_store(cls, store: ConfigStore) -> "CentralSettings":
@@ -254,6 +261,11 @@ class CentralSettings:
             subscriptions=tuple(central["subscriptions"]["gates"]),
             state_dir=state_dir,
             bindings=document["bindings"]["suite_requirements"],
+            heartbeat_seconds=float(central["heartbeat_seconds"]),
+            poll_seconds=float(central["poll_seconds"]),
+            retry_backoff_seconds=float(central["retry_backoff_seconds"]),
+            max_retry_backoff_seconds=float(central["max_retry_backoff_seconds"]),
+            max_attempts=int(central["max_attempts"]),
         )
 
 
@@ -265,6 +277,19 @@ class CentralAgent:
 
     def announce(self) -> None:
         nonce = uuid.uuid4().hex
+        observed_at = _now()
+        capabilities: dict[tuple[str, str, tuple[str, ...]], dict[str, Any]] = {}
+        for binding in self.settings.bindings.values():
+            features = tuple(sorted(set(binding["capabilities"])))
+            key = (binding["platform_class"], binding["device_model"], features)
+            capabilities[key] = {
+                "platform_class": binding["platform_class"],
+                "device_model": binding["device_model"],
+                "features": list(features),
+                "aggregate_state": "available",
+                "evidence_at": observed_at,
+            }
+        distinct_capabilities = list(capabilities.values())
         self.client.request(
             "POST",
             f"/api/v2/labs/{quote(self.settings.lab_id)}/heartbeat",
@@ -273,16 +298,8 @@ class CentralAgent:
                 "idempotency_key": f"heartbeat-{nonce}",
                 "agent_version": "mining-qa-lab/0.1.0",
                 "sent_at": _now(),
-                "available_slots": 1,
-                "capabilities": [
-                    {
-                        "platform_class": "gamma-600",
-                        "device_model": "Gamma 602",
-                        "features": ["api", "pool-config", "stratum-v1"],
-                        "aggregate_state": "available",
-                        "evidence_at": _now(),
-                    }
-                ],
+                "available_slots": max(0, len(self.settings.bindings) - self.database.central_agent_status()["active_leases"]),
+                "capabilities": distinct_capabilities,
                 "health_code": "ok",
             },
         )
@@ -344,8 +361,37 @@ class CentralAgent:
 
     def _binding(self, offer: Mapping[str, Any]) -> Mapping[str, Any] | None:
         requirements = offer["definition"]["suite"]["requirements"]
-        matches = [self.settings.bindings[item["requirement_id"]] for item in requirements if item["requirement_id"] in self.settings.bindings]
+        matches = []
+        for requirement in requirements:
+            binding = self.settings.bindings.get(requirement["requirement_id"])
+            if not binding:
+                continue
+            if (
+                binding["platform_class"] != requirement["platform_class"]
+                or binding["device_model"] != requirement["device_model"]
+                or not set(requirement["capabilities"]).issubset(binding["capabilities"])
+                or offer["platform_class"] != binding["platform_class"]
+                or offer["device_model"] != binding["device_model"]
+            ):
+                continue
+            matches.append(binding)
         return matches[0] if len(matches) == 1 and len(requirements) == 1 else None
+
+    def _preflight(self, binding: Mapping[str, Any]) -> tuple[Path, Path, str, str]:
+        root = Path(str(binding["testcode_root"])).resolve()
+        profile = Path(str(binding["profile"])).resolve()
+        if not root.is_dir() or not (root / ".git").exists():
+            raise ConfigError("bound testcode checkout is unavailable")
+        if not profile.is_file():
+            raise ConfigError("bound runner profile is unavailable")
+        sha, ref = self._testcode_identity(root)
+        if sha != binding["testcode_commit"]:
+            raise ConfigError("bound testcode checkout does not match its trusted commit")
+        mock_env = str(binding.get("mock_base_url_env", "MINING_QA_MOCK_URL"))
+        mock_url = os.environ.get(mock_env, "").strip()
+        if urlsplit(mock_url).hostname not in {"127.0.0.1", "::1", "localhost"}:
+            raise ConfigError("central simulation binding requires a loopback mock device")
+        return root, profile, sha, ref
 
     def _claim(self, execution: Mapping[str, Any], *, next_generation: bool = False) -> dict[str, Any]:
         generation = int(execution.get("claim_generation") or 0)
@@ -419,7 +465,8 @@ class CentralAgent:
         offer = execution["offer"]
         execution_id = str(execution["lab_execution_id"])
         assignment_id = _stable_id("assignment", execution_id)
-        attempt_id = _stable_id("attempt", f"{execution_id}:1")
+        attempt_number = len(self.database.central_attempts(execution_id)) + 1
+        attempt_id = _stable_id("attempt", f"{execution_id}:{attempt_number}")
         local_run_id = _stable_id("local", execution_id)
         started_at = _now()
         attempt, created = self.database.start_central_attempt(
@@ -427,12 +474,11 @@ class CentralAgent:
             assignment_id=assignment_id,
             attempt_id=attempt_id,
             started_at=started_at,
+            max_attempts=self.settings.max_attempts,
         )
         if not created:
             raise ConfigError(f"central execution {execution_id} already has a runner attempt")
-        root = Path(str(binding["testcode_root"])).resolve()
-        profile = Path(str(binding["profile"])).resolve()
-        sha, ref = self._testcode_identity(root)
+        root, profile, sha, ref = self._preflight(binding)
         source = offer["source"]
         definition = offer["definition"]
         metadata = {
@@ -455,7 +501,7 @@ class CentralAgent:
             "local_gate_run_id": local_run_id,
             "assignment_id": assignment_id,
             "attempt_id": attempt_id,
-            "attempt": 1,
+            "attempt": attempt_number,
             "source": source,
             "testcode": {
                 "repository": "johnny9/mining-qa-testcode",
@@ -489,9 +535,13 @@ class CentralAgent:
             },
         )
         environment = os.environ.copy()
+        python_paths = [str(root / "src")]
+        guard_path = os.environ.get("MINING_QA_NETWORK_GUARD_PATH", "").strip()
+        if guard_path:
+            python_paths.insert(0, guard_path)
         environment.update(
             {
-                "PYTHONPATH": str(root / "src"),
+                "PYTHONPATH": os.pathsep.join(python_paths),
                 "MINING_QA_MOCK_URL": mock_url,
                 "MINING_QA_TEST_ARTIFACTS": str(artifacts_path),
                 "MINING_QA_URL": self.settings.base_url,
@@ -509,18 +559,58 @@ class CentralAgent:
             environment.pop("MINER_TEST_PR_NUMBER", None)
         else:
             environment["MINER_TEST_PR_NUMBER"] = str(source["pr_number"])
-        result = subprocess.run(
-            [sys.executable, "-m", "miner_testcode", "--config", str(profile)],
-            cwd=root,
-            env=environment,
-            capture_output=True,
-            timeout=60,
+        private_process = work / ".private"
+        private_process.mkdir(mode=0o700, exist_ok=True)
+        stdout_path = private_process / f"attempt-{attempt_number}.stdout.raw.log"
+        stderr_path = private_process / f"attempt-{attempt_number}.stderr.raw.log"
+        renewal_errors: list[str] = []
+        renewal_interval = max(
+            1.0,
+            min(float(offer["claim_ttl_seconds"]) / 2.0, 15.0),
         )
-        if len(result.stdout) + len(result.stderr) > MAX_RUNNER_OUTPUT_BYTES:
+        deadline = time.monotonic() + 60.0
+        with stdout_path.open("wb") as stdout, stderr_path.open("wb") as stderr:
+            process = subprocess.Popen(
+                [sys.executable, "-m", "miner_testcode", "--config", str(profile)],
+                cwd=root,
+                env=environment,
+                stdout=stdout,
+                stderr=stderr,
+            )
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    process.kill()
+                    process.wait()
+                    raise subprocess.TimeoutExpired(process.args, 60)
+                try:
+                    process.wait(timeout=min(renewal_interval, remaining))
+                    break
+                except subprocess.TimeoutExpired:
+                    current = self.database.central_execution(execution_id)
+                    if current is None:
+                        renewal_errors.append(
+                            "central execution disappeared during renewal"
+                        )
+                        continue
+                    try:
+                        self._renew(current)
+                    except (CoordinationHttpError, OSError, ValueError) as exc:
+                        # Coordination loss must not interrupt Testcode cleanup.
+                        renewal_errors.append(f"{type(exc).__name__}: {exc}"[:500])
+        stdout_path.chmod(0o600)
+        stderr_path.chmod(0o600)
+        stdout_bytes = stdout_path.read_bytes()
+        stderr_bytes = stderr_path.read_bytes()
+        if len(stdout_bytes) + len(stderr_bytes) > MAX_RUNNER_OUTPUT_BYTES:
             raise ConfigError("runner output exceeded 1 MiB")
-        process_log = (result.stdout + b"\n" + result.stderr).decode(
+        process_log = (stdout_bytes + b"\n" + stderr_bytes).decode(
             "utf-8", errors="replace"
         )
+        if renewal_errors:
+            process_log += "\nclaim renewal diagnostics: " + "; ".join(
+                renewal_errors[:8]
+            )
         for canary in _CANARIES:
             process_log = process_log.replace(canary, "<redacted-canary>")
         (work / "runner-process.log").write_text(process_log, encoding="utf-8")
@@ -528,7 +618,9 @@ class CentralAgent:
         try:
             raw_pointer = pointer_path.read_bytes()
         except FileNotFoundError as exc:
-            raise ConfigError(f"runner exited {result.returncode} without a result pointer") from exc
+            raise ConfigError(
+                f"runner exited {process.returncode} without a result pointer"
+            ) from exc
         if len(raw_pointer) > 64 * 1024:
             raise ConfigError("runner result pointer exceeds 64 KiB")
         pointer = json.loads(raw_pointer)
@@ -577,7 +669,7 @@ class CentralAgent:
     ) -> dict[str, Any]:
         offer = execution["offer"]
         definition = offer["definition"]
-        attempt = self.database.central_attempts(str(execution["lab_execution_id"]))[0]
+        attempt = self.database.central_attempts(str(execution["lab_execution_id"]))[-1]
         publisher = next(item for item in pointer["publishers"] if item["name"] == "mining_qa_status")
         return {
             "contract_version": 2,
@@ -648,6 +740,7 @@ class CentralAgent:
                     str(execution["lab_execution_id"]), state="conflict", response_code=409
                 )
                 self.database.update_central_execution(str(execution["lab_execution_id"]), state="conflict")
+                self.database.release_central_resources(str(execution["lab_execution_id"]))
                 return "conflict"
             raise
         if os.environ.get("MINING_QA_INTEGRATION_REPLAY") == "1":
@@ -664,10 +757,67 @@ class CentralAgent:
         self.database.update_central_execution(
             str(execution["lab_execution_id"]), state="completed", claim_token=None
         )
+        self.database.release_central_resources(str(execution["lab_execution_id"]))
         return "completed"
 
-    def process(self, *, phase: str, behavior: str, replay_from_zero: bool = False) -> list[str]:
-        self.announce()
+    def _execute_with_lease(
+        self,
+        execution: Mapping[str, Any],
+        binding: Mapping[str, Any],
+        *,
+        phase: str,
+        behavior: str,
+    ) -> str:
+        execution_id = str(execution["lab_execution_id"])
+        if phase == "reclaim":
+            self._claim(execution, next_generation=True)
+        elif execution["state"] != "claimed":
+            self._claim(execution)
+        current = self.database.central_execution(execution_id)
+        if current is None:
+            raise ConfigError("claimed central execution disappeared")
+        if phase == "claim-only":
+            return "claimed"
+        self._renew(current)
+        current = self.database.central_execution(execution_id)
+        if current is None:
+            raise ConfigError("renewed central execution disappeared")
+        while True:
+            try:
+                pointer, started_at, completed_at, sha = self._run_testcode(
+                    current, binding, behavior
+                )
+                break
+            except (ConfigError, OSError, subprocess.SubprocessError, ValueError) as exc:
+                self.database.fail_running_central_attempt(execution_id, str(exc))
+                attempt_count = len(self.database.central_attempts(execution_id))
+                if attempt_count >= self.settings.max_attempts:
+                    self.database.update_central_execution(execution_id, state="error")
+                    self.database.release_central_resources(execution_id)
+                    return "error"
+                delay = min(
+                    self.settings.retry_backoff_seconds * (2 ** (attempt_count - 1)),
+                    self.settings.max_retry_backoff_seconds,
+                )
+                time.sleep(delay)
+        completion = self._completion(current, pointer, started_at, completed_at, sha)
+        self.database.enqueue_central_completion(
+            execution_id=execution_id,
+            idempotency_key=str(completion["idempotency_key"]),
+            body=completion,
+        )
+        return self._flush(current)
+
+    def process(
+        self,
+        *,
+        phase: str,
+        behavior: str,
+        replay_from_zero: bool = False,
+        announce: bool = True,
+    ) -> list[str]:
+        if announce:
+            self.announce()
         self.pull(replay_from_zero=replay_from_zero)
         results: list[str] = []
         for saved in self.database.pending_central_executions(self.settings.lab_id):
@@ -683,35 +833,49 @@ class CentralAgent:
                 self._decline(validated, "no_safe_binding")
                 results.append("declined")
                 continue
+            try:
+                self._preflight(binding)
+            except ConfigError:
+                self._decline(validated, "no_safe_binding")
+                results.append("declined")
+                continue
             execution = self.database.central_execution(str(saved["lab_execution_id"]))
             if execution is None:
                 raise ConfigError("persisted central execution disappeared")
             attempts = self.database.central_attempts(str(execution["lab_execution_id"]))
-            if attempts and attempts[0]["state"] != "running":
+            outbox = self.database.central_outbox(str(execution["lab_execution_id"]))
+            if outbox:
                 results.append(self._flush(execution))
                 continue
-            if phase == "reclaim":
-                self._claim(execution, next_generation=True)
-            elif execution["state"] != "claimed":
-                self._claim(execution)
-            execution = self.database.central_execution(str(execution["lab_execution_id"]))
-            if execution is None:
-                raise ConfigError("claimed central execution disappeared")
-            if phase == "claim-only":
-                results.append("claimed")
+            if attempts and attempts[-1]["state"] == "running":
+                self.database.fail_running_central_attempt(
+                    str(execution["lab_execution_id"]),
+                    "agent restarted while the runner attempt was active",
+                )
+                attempts = self.database.central_attempts(str(execution["lab_execution_id"]))
+            assignment_id = _stable_id("assignment", str(execution["lab_execution_id"]))
+            if not self.database.acquire_central_resources(
+                str(execution["lab_execution_id"]),
+                assignment_id,
+                list(binding["resources"]),
+            ):
+                self._decline(validated, "local_capacity_changed")
+                results.append("declined")
                 continue
-            self._renew(execution)
-            execution = self.database.central_execution(str(execution["lab_execution_id"]))
-            if execution is None:
-                raise ConfigError("renewed central execution disappeared")
-            pointer, started_at, completed_at, sha = self._run_testcode(execution, binding, behavior)
-            completion = self._completion(execution, pointer, started_at, completed_at, sha)
-            self.database.enqueue_central_completion(
-                execution_id=str(execution["lab_execution_id"]),
-                idempotency_key=str(completion["idempotency_key"]),
-                body=completion,
-            )
-            results.append(self._flush(execution))
+            try:
+                results.append(
+                    self._execute_with_lease(
+                        execution,
+                        binding,
+                        phase=phase,
+                        behavior=behavior,
+                    )
+                )
+            except Exception:
+                self.database.release_central_resources(
+                    str(execution["lab_execution_id"])
+                )
+                raise
         return results
 
 
@@ -735,3 +899,57 @@ def run_central_once(
         behavior=behavior,
         replay_from_zero=replay_from_zero,
     )
+
+
+def run_central_forever(
+    store: ConfigStore,
+    database: OrchestratorDatabase,
+    *,
+    stop: threading.Event | None = None,
+    max_cycles: int | None = None,
+) -> int:
+    """Run bounded coordination cycles with persisted pause and retry state."""
+    stop = stop or threading.Event()
+    settings = CentralSettings.from_store(store)
+    agent = CentralAgent(settings, database)
+    initial_status = database.central_agent_status()
+    failures = int(initial_status["consecutive_failures"])
+    cycles = 0
+    next_heartbeat_at = 0.0
+    while not stop.is_set() and (max_cycles is None or cycles < max_cycles):
+        status = database.central_agent_status()
+        if status["paused"]:
+            if max_cycles is not None:
+                return cycles
+            stop.wait(min(settings.poll_seconds, 2.0))
+            continue
+        retry_at = status.get("next_retry_at")
+        if retry_at is not None and float(retry_at) > time.time():
+            stop.wait(min(float(retry_at) - time.time(), 2.0))
+            continue
+        error: str | None = None
+        delay = settings.poll_seconds
+        try:
+            now = time.monotonic()
+            announce = now >= next_heartbeat_at
+            agent.process(phase="run", behavior="pass", announce=announce)
+            if announce:
+                next_heartbeat_at = now + settings.heartbeat_seconds
+            failures = 0
+        except (ConfigError, CoordinationHttpError, OSError, ValueError) as exc:
+            failures += 1
+            error = f"{type(exc).__name__}: {exc}"
+            delay = min(
+                settings.retry_backoff_seconds * (2 ** (failures - 1)),
+                settings.max_retry_backoff_seconds,
+            )
+        cycles += 1
+        next_retry = time.time() + delay if error else None
+        database.record_central_agent_cycle(
+            error=error,
+            consecutive_failures=failures,
+            next_retry_at=next_retry,
+        )
+        if max_cycles is None or cycles < max_cycles:
+            stop.wait(delay)
+    return cycles

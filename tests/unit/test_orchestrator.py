@@ -319,6 +319,8 @@ class RemoteRerunTest(unittest.TestCase):
 
             first = database.apply_remote_rerun(request)
             self.assertTrue(first["applied"])
+            original_attempt = database.assignment_attempts(assignments[0]["id"])[0]
+            self.assertEqual(original_attempt["status"], "passed")
             updated = database.gate_run(run["id"])
             self.assertEqual(updated["status"], "queued")
             self.assertEqual(updated["assignments"][0]["status"], "queued")
@@ -326,6 +328,10 @@ class RemoteRerunTest(unittest.TestCase):
             self.assertEqual(updated["assignments"][0]["attempt"], 1)
 
             self.assertTrue(database.acquire(assignments[0]["id"], []))
+            attempts = database.assignment_attempts(assignments[0]["id"])
+            self.assertEqual([item["attempt"] for item in attempts], [1, 2])
+            self.assertEqual(attempts[0], original_attempt)
+            self.assertEqual(attempts[1]["status"], "running")
             second = database.apply_remote_rerun(request)
             self.assertFalse(second["applied"])
             self.assertEqual(

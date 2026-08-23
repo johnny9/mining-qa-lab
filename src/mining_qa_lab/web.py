@@ -81,12 +81,28 @@ def create_app(
         last_poll = 0.0
         while not stop.is_set():
             try:
+                if store.snapshot.document["coordination"]["mode"] == "central":
+                    from .central import run_central_forever
+
+                    await asyncio.to_thread(
+                        run_central_forever,
+                        store,
+                        database,
+                        max_cycles=1,
+                    )
+                    central_interval = float(
+                        store.snapshot.document["coordination"]["central"]["poll_seconds"]
+                    )
+                    await asyncio.wait_for(stop.wait(), timeout=central_interval)
+                    continue
                 now = asyncio.get_running_loop().time()
                 if now - last_poll >= interval:
                     await asyncio.to_thread(engine.poll)
                     last_poll = now
                 while await asyncio.to_thread(engine.tick):
                     pass
+            except TimeoutError:
+                continue
             except Exception as exc:  # background health is exposed through logs
                 import logging
 
@@ -160,7 +176,28 @@ def create_app(
             "config_revision": store.snapshot.revision,
             "queued_assignments": len(database.assignments(status="queued")),
             "running_assignments": len(database.assignments(status="running")),
+            "central": database.central_agent_status()
+            if store.snapshot.document["coordination"]["mode"] == "central"
+            else None,
         }
+
+    @app.get("/api/v1/central/status", dependencies=[Depends(authorize)])
+    async def central_status() -> dict[str, Any]:
+        if store.snapshot.document["coordination"]["mode"] != "central":
+            raise HTTPException(status_code=409, detail="central coordination mode is not enabled")
+        return database.central_agent_status()
+
+    @app.post("/api/v1/central/pause", dependencies=[Depends(authorize)])
+    async def pause_central() -> dict[str, Any]:
+        if store.snapshot.document["coordination"]["mode"] != "central":
+            raise HTTPException(status_code=409, detail="central coordination mode is not enabled")
+        return database.set_central_agent_paused(True)
+
+    @app.post("/api/v1/central/resume", dependencies=[Depends(authorize)])
+    async def resume_central() -> dict[str, Any]:
+        if store.snapshot.document["coordination"]["mode"] != "central":
+            raise HTTPException(status_code=409, detail="central coordination mode is not enabled")
+        return database.set_central_agent_paused(False)
 
     @app.get("/api/v1/config")
     async def get_config() -> Response:

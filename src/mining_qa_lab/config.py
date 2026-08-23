@@ -230,6 +230,8 @@ def validate_config(document: Mapping[str, Any]) -> dict[str, Any]:
             ("heartbeat_seconds", 30, 900),
             ("poll_seconds", 10, 300),
             ("request_timeout_seconds", 10, 120),
+            ("retry_backoff_seconds", 1, 300),
+            ("max_retry_backoff_seconds", 60, 900),
         ):
             value = central.setdefault(key, default)
             if (
@@ -238,6 +240,13 @@ def validate_config(document: Mapping[str, Any]) -> dict[str, Any]:
                 or not 0 < value <= maximum
             ):
                 raise ConfigError(f"coordination.central.{key} must be positive and bounded")
+        max_attempts = central.setdefault("max_attempts", 3)
+        if isinstance(max_attempts, bool) or not isinstance(max_attempts, int) or not 1 <= max_attempts <= 5:
+            raise ConfigError("coordination.central.max_attempts must be between 1 and 5")
+        if central["max_retry_backoff_seconds"] < central["retry_backoff_seconds"]:
+            raise ConfigError(
+                "coordination.central.max_retry_backoff_seconds must be at least retry_backoff_seconds"
+            )
         subscriptions = _mapping(
             central.setdefault("subscriptions", {}),
             "coordination.central.subscriptions",
@@ -271,6 +280,37 @@ def validate_config(document: Mapping[str, Any]) -> dict[str, Any]:
                 binding.get("mock_base_url_env", "MINING_QA_MOCK_URL"),
                 f"bindings.suite_requirements.{requirement_id}.mock_base_url_env",
             )
+            _string(
+                binding.get("platform_class"),
+                f"bindings.suite_requirements.{requirement_id}.platform_class",
+            )
+            _string(
+                binding.get("device_model"),
+                f"bindings.suite_requirements.{requirement_id}.device_model",
+            )
+            binding["capabilities"] = _string_list(
+                binding.get("capabilities"),
+                f"bindings.suite_requirements.{requirement_id}.capabilities",
+                required=True,
+            )
+            binding["resources"] = _string_list(
+                binding.get("resources"),
+                f"bindings.suite_requirements.{requirement_id}.resources",
+                required=True,
+            )
+            for index, resource in enumerate(binding["resources"]):
+                if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", resource):
+                    raise ConfigError(
+                        f"bindings.suite_requirements.{requirement_id}.resources[{index}] is invalid"
+                    )
+            testcode_commit = _string(
+                binding.get("testcode_commit"),
+                f"bindings.suite_requirements.{requirement_id}.testcode_commit",
+            )
+            if not re.fullmatch(r"[0-9a-f]{40}", testcode_commit):
+                raise ConfigError(
+                    f"bindings.suite_requirements.{requirement_id}.testcode_commit must be an exact commit SHA"
+                )
 
     testcode = _mapping(raw.setdefault("testcode", {}), "testcode")
     testcode.setdefault("enabled", False)

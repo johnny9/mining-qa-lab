@@ -77,6 +77,20 @@ create table if not exists assignments (
     unique(gate_run_id, setup_id, module_id)
 );
 
+create table if not exists assignment_attempts (
+    attempt_id text primary key,
+    assignment_id text not null references assignments(id) on delete cascade,
+    attempt integer not null check(attempt > 0),
+    status text not null,
+    detail text,
+    result_pointer text,
+    qa_result_id text,
+    qa_result_url text,
+    started_at real not null,
+    finished_at real,
+    unique(assignment_id, attempt)
+);
+
 create table if not exists resource_leases (
     resource_id text primary key,
     assignment_id text not null references assignments(id) on delete cascade,
@@ -133,7 +147,7 @@ create table if not exists central_executions (
 create table if not exists central_attempts (
     attempt_id text primary key,
     lab_execution_id text not null references central_executions(lab_execution_id),
-    assignment_id text not null unique,
+    assignment_id text not null,
     attempt integer not null,
     state text not null,
     started_at text not null,
@@ -141,6 +155,23 @@ create table if not exists central_attempts (
     pointer_json text,
     cleanup_disposition text,
     unique(lab_execution_id, attempt)
+);
+
+create table if not exists central_resource_leases (
+    resource_id text primary key,
+    lab_execution_id text not null references central_executions(lab_execution_id) on delete cascade,
+    assignment_id text not null,
+    acquired_at real not null
+);
+
+create table if not exists central_agent_control (
+    singleton integer primary key check(singleton = 1),
+    paused integer not null default 0 check(paused in (0, 1)),
+    consecutive_failures integer not null default 0 check(consecutive_failures >= 0),
+    last_error text,
+    last_cycle_at real,
+    next_retry_at real,
+    updated_at real not null
 );
 
 create table if not exists central_outbox (
@@ -155,12 +186,28 @@ create table if not exists central_outbox (
 create index if not exists events_unplanned_idx on events(planned_at, created_at);
 create index if not exists gate_runs_status_idx on gate_runs(status, created_at);
 create index if not exists assignments_status_idx on assignments(status, created_at);
+create index if not exists assignment_attempts_assignment_idx
+    on assignment_attempts(assignment_id, attempt);
 create index if not exists assignment_artifacts_assignment_idx
     on assignment_artifacts(assignment_id, attempt, relative_path);
 create index if not exists remote_rerun_requests_run_idx
     on remote_rerun_requests(local_gate_run_id, applied_at);
 create index if not exists central_executions_state_idx
     on central_executions(lab_id, state, created_at);
+
+create trigger if not exists assignment_attempts_terminal_immutable
+before update on assignment_attempts
+when old.finished_at is not null
+begin
+    select raise(abort, 'terminal assignment attempts are immutable');
+end;
+
+create trigger if not exists central_attempts_terminal_immutable
+before update on central_attempts
+when old.completed_at is not null
+begin
+    select raise(abort, 'terminal central attempts are immutable');
+end;
 """
 
 
@@ -172,7 +219,80 @@ class OrchestratorDatabase:
         self._connection = sqlite3.connect(self.path, check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
         self._connection.executescript(SCHEMA)
+        self._migrate_central_attempt_identity()
+        self._backfill_assignment_attempts()
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                insert into central_agent_control(singleton, updated_at)
+                values (1, ?)
+                on conflict(singleton) do nothing
+                """,
+                (time.time(),),
+            )
         self.path.chmod(0o600)
+
+    def _migrate_central_attempt_identity(self) -> None:
+        row = self._connection.execute(
+            "select sql from sqlite_master where type = 'table' and name = 'central_attempts'"
+        ).fetchone()
+        if not row or "assignment_id text not null unique" not in row["sql"].lower():
+            return
+        self._connection.executescript(
+            """
+            alter table central_attempts rename to central_attempts_legacy;
+            create table central_attempts (
+                attempt_id text primary key,
+                lab_execution_id text not null references central_executions(lab_execution_id),
+                assignment_id text not null,
+                attempt integer not null,
+                state text not null,
+                started_at text not null,
+                completed_at text,
+                pointer_json text,
+                cleanup_disposition text,
+                unique(lab_execution_id, attempt)
+            );
+            insert into central_attempts select * from central_attempts_legacy;
+            drop table central_attempts_legacy;
+            create trigger central_attempts_terminal_immutable
+            before update on central_attempts
+            when old.completed_at is not null
+            begin
+                select raise(abort, 'terminal central attempts are immutable');
+            end;
+            """
+        )
+
+    def _backfill_assignment_attempts(self) -> None:
+        """Preserve evidence created by databases predating normalized attempts."""
+        with self.transaction() as connection:
+            rows = connection.execute(
+                "select * from assignments where attempt > 0"
+            ).fetchall()
+            for row in rows:
+                connection.execute(
+                    """
+                    insert into assignment_attempts(
+                        attempt_id, assignment_id, attempt, status, detail,
+                        result_pointer, qa_result_id, qa_result_url, started_at,
+                        finished_at
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    on conflict(assignment_id, attempt) do nothing
+                    """,
+                    (
+                        f"legacy-{row['id']}-{row['attempt']}",
+                        row["id"],
+                        row["attempt"],
+                        row["status"],
+                        row["detail"],
+                        row["result_pointer"],
+                        row["qa_result_id"],
+                        row["qa_result_url"],
+                        row["started_at"] or row["created_at"],
+                        row["finished_at"],
+                    ),
+                )
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
@@ -306,22 +426,41 @@ class OrchestratorDatabase:
         assignment_id: str,
         attempt_id: str,
         started_at: str,
+        max_attempts: int = 3,
     ) -> tuple[dict[str, Any], bool]:
         with self.transaction() as connection:
+            existing = connection.execute(
+                "select * from central_attempts where attempt_id = ?",
+                (attempt_id,),
+            ).fetchone()
+            if existing:
+                if (
+                    existing["lab_execution_id"] != execution_id
+                    or existing["assignment_id"] != assignment_id
+                ):
+                    raise ValueError("central attempt identity changed on replay")
+                return dict(existing), False
+            latest = connection.execute(
+                "select max(attempt) from central_attempts where lab_execution_id = ?",
+                (execution_id,),
+            ).fetchone()[0]
+            attempt = int(latest or 0) + 1
+            if attempt > max_attempts:
+                raise ValueError("central execution exceeded its bounded attempt count")
             cursor = connection.execute(
                 """
                 insert into central_attempts(
                     attempt_id, lab_execution_id, assignment_id, attempt,
                     state, started_at
-                ) values (?, ?, ?, 1, 'running', ?)
+                ) values (?, ?, ?, ?, 'running', ?)
                 on conflict(lab_execution_id, attempt) do nothing
                 """,
-                (attempt_id, execution_id, assignment_id, started_at),
+                (attempt_id, execution_id, assignment_id, attempt, started_at),
             )
             created = cursor.rowcount == 1
             row = connection.execute(
-                "select * from central_attempts where lab_execution_id = ? and attempt = 1",
-                (execution_id,),
+                "select * from central_attempts where lab_execution_id = ? and attempt = ?",
+                (execution_id, attempt),
             ).fetchone()
             connection.execute(
                 """
@@ -332,6 +471,83 @@ class OrchestratorDatabase:
                 (assignment_id, time.time(), execution_id),
             )
         return dict(row), created
+
+    def acquire_central_resources(
+        self, execution_id: str, assignment_id: str, resources: list[str]
+    ) -> bool:
+        if not resources:
+            raise ValueError("central binding requires at least one resource")
+        try:
+            with self.transaction() as connection:
+                for resource in sorted(set(resources)):
+                    existing = connection.execute(
+                        "select lab_execution_id from central_resource_leases where resource_id = ?",
+                        (resource,),
+                    ).fetchone()
+                    if existing and existing["lab_execution_id"] == execution_id:
+                        continue
+                    connection.execute(
+                        """
+                        insert into central_resource_leases(
+                            resource_id, lab_execution_id, assignment_id, acquired_at
+                        ) values (?, ?, ?, ?)
+                        """,
+                        (resource, execution_id, assignment_id, time.time()),
+                    )
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+    def release_central_resources(self, execution_id: str) -> None:
+        with self.transaction() as connection:
+            connection.execute(
+                "delete from central_resource_leases where lab_execution_id = ?",
+                (execution_id,),
+            )
+
+    def central_agent_status(self) -> dict[str, Any]:
+        row = self._connection.execute(
+            "select * from central_agent_control where singleton = 1"
+        ).fetchone()
+        value = dict(row)
+        value["paused"] = bool(value["paused"])
+        value["pending_executions"] = self._connection.execute(
+            "select count(*) from central_executions where state in ('received', 'claimed')"
+        ).fetchone()[0]
+        value["pending_outbox"] = self._connection.execute(
+            "select count(*) from central_outbox where state = 'pending'"
+        ).fetchone()[0]
+        value["active_leases"] = self._connection.execute(
+            "select count(*) from central_resource_leases"
+        ).fetchone()[0]
+        return value
+
+    def set_central_agent_paused(self, paused: bool) -> dict[str, Any]:
+        with self.transaction() as connection:
+            connection.execute(
+                "update central_agent_control set paused = ?, updated_at = ? where singleton = 1",
+                (int(paused), time.time()),
+            )
+        return self.central_agent_status()
+
+    def record_central_agent_cycle(
+        self, *, error: str | None, consecutive_failures: int, next_retry_at: float | None
+    ) -> None:
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                update central_agent_control set consecutive_failures = ?,
+                    last_error = ?, last_cycle_at = ?, next_retry_at = ?, updated_at = ?
+                where singleton = 1
+                """,
+                (
+                    consecutive_failures,
+                    error[:2000] if error else None,
+                    time.time(),
+                    next_retry_at,
+                    time.time(),
+                ),
+            )
 
     def finish_central_attempt(
         self,
@@ -355,6 +571,27 @@ class OrchestratorDatabase:
                     json.dumps(dict(pointer), sort_keys=True, separators=(",", ":")),
                     cleanup_disposition,
                     attempt_id,
+                ),
+            )
+
+    def fail_running_central_attempt(self, execution_id: str, detail: str) -> None:
+        completed_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                update central_attempts
+                set state = 'error', completed_at = ?, pointer_json = ?,
+                    cleanup_disposition = 'error'
+                where lab_execution_id = ? and completed_at is null
+                """,
+                (
+                    completed_at,
+                    json.dumps(
+                        {"status": "error", "detail": detail[:2000]},
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    execution_id,
                 ),
             )
 
@@ -609,6 +846,13 @@ class OrchestratorDatabase:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def assignment_attempts(self, assignment_id: str) -> list[dict[str, Any]]:
+        rows = self._connection.execute(
+            "select * from assignment_attempts where assignment_id = ? order by attempt",
+            (assignment_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     def next_assignment(self) -> dict[str, Any] | None:
         row = self._connection.execute(
             """
@@ -636,6 +880,17 @@ class OrchestratorDatabase:
                 )
                 if connection.execute("select changes()").fetchone()[0] != 1:
                     raise sqlite3.IntegrityError("assignment is not queued")
+                assignment = connection.execute(
+                    "select attempt from assignments where id = ?", (assignment_id,)
+                ).fetchone()
+                connection.execute(
+                    """
+                    insert into assignment_attempts(
+                        attempt_id, assignment_id, attempt, status, started_at
+                    ) values (?, ?, ?, 'running', ?)
+                    """,
+                    (str(uuid.uuid4()), assignment_id, assignment["attempt"], now),
+                )
             return True
         except sqlite3.IntegrityError:
             return False
@@ -651,6 +906,7 @@ class OrchestratorDatabase:
         qa_result_url: str | None = None,
     ) -> None:
         with self.transaction() as connection:
+            finished_at = time.time()
             connection.execute(
                 """
                 update assignments set status = ?, detail = ?, result_pointer = ?,
@@ -663,10 +919,32 @@ class OrchestratorDatabase:
                     result_pointer,
                     qa_result_id,
                     qa_result_url,
-                    time.time(),
+                    finished_at,
                     assignment_id,
                 ),
             )
+            attempt = connection.execute(
+                "select attempt from assignments where id = ?", (assignment_id,)
+            ).fetchone()
+            if attempt and attempt["attempt"] > 0:
+                connection.execute(
+                    """
+                    update assignment_attempts set status = ?, detail = ?,
+                        result_pointer = ?, qa_result_id = ?, qa_result_url = ?,
+                        finished_at = ?
+                    where assignment_id = ? and attempt = ? and finished_at is null
+                    """,
+                    (
+                        status,
+                        detail,
+                        result_pointer,
+                        qa_result_id,
+                        qa_result_url,
+                        finished_at,
+                        assignment_id,
+                        attempt["attempt"],
+                    ),
+                )
             connection.execute(
                 "delete from resource_leases where assignment_id = ?", (assignment_id,)
             )
@@ -778,6 +1056,13 @@ class OrchestratorDatabase:
                 "select id from assignments where status = 'running'"
             ).fetchall()
             for row in rows:
+                connection.execute(
+                    """
+                    update assignment_attempts set status = 'error', detail = ?, finished_at = ?
+                    where assignment_id = ? and finished_at is null
+                    """,
+                    ("orchestrator restarted while assignment was running", time.time(), row["id"]),
+                )
                 connection.execute(
                     "update assignments set status = 'error', detail = ?, finished_at = ? where id = ?",
                     ("orchestrator restarted while assignment was running", time.time(), row["id"]),
