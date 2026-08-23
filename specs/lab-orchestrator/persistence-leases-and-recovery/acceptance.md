@@ -28,7 +28,8 @@
 ## Verification evidence
 
 - `tests.unit.test_orchestrator` covers persistence, leases, recovery, and state
-  transitions; reconciled 2026-08-10.
+  transitions, including terminal-immutable attempt history across retry and
+  reopen; reconciled 2026-08-16.
 - No lab-host process-kill drill was performed for this documentation iteration.
 
 ## Acceptance rule

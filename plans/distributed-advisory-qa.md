@@ -1,8 +1,8 @@
 # Distributed advisory QA — lab service delivery plan
 
-Status: proposed proof of concept and migration plan
+Status: implemented proof-of-concept delivery record; durable specs are authoritative
 
-Updated: 2026-08-14
+Updated: 2026-08-16
 
 Related plans:
 
@@ -14,6 +14,12 @@ Durable contracts and acceptance now live in:
 - [Central coordination agent](../specs/lab-orchestrator/central-coordination-agent/SPEC.md)
 - [Status/Lab coordination v2](../contracts/lab-coordination-v2.md)
 - [Lab/Testcode orchestration v2](../contracts/orchestration-v2.md)
+
+This file records the original delivery sequence and its reconciliation. The
+linked feature specs and versioned contracts are normative. QAUI PNGs are
+non-normative information-design references; implemented agent health uses
+`ok`, `degraded`, `paused`, and `error` and does not define the concept-only
+`Maintenance` state.
 
 ## Goal
 
@@ -97,19 +103,30 @@ coordination:
     heartbeat_seconds: 30
     poll_seconds: 10
     claim_ttl_seconds: 120
+    retry_backoff_seconds: 2
+    max_backoff_seconds: 60
+    max_attempts: 3
     subscriptions:
       gates: [firmware-advisory]
 
 bindings:
   suite_requirements:
     gamma-http-and-stratum:
-      setup: gamma-bench
-      profile: gamma-read-write
+      profile: /private/profiles/gamma-read-write.toml
+      testcode_root: /private/checkouts/mining-qa-testcode
+      testcode_commit: 0123456789abcdef0123456789abcdef01234567
+      platform_class: gamma
+      device_model: gamma-602
+      capabilities: [http, stratum-v1]
+      resources: [gamma-bench]
 ```
 
-The checked-in example uses placeholders only. Tokens are read from named
-environment variables and are never written to YAML, SQLite, logs, subprocess
-arguments, metadata, or results.
+The checked-in example uses placeholders only. The long-lived Lab bearer token
+is read from a named environment variable and is never written to YAML, SQLite,
+logs, subprocess arguments, metadata, or results. A short-lived claim
+capability may be retained only in the private mode-0600 SQLite state required
+for crash-safe renewal/completion; it is cleared at terminal disposition and
+never logged, placed in YAML, passed to Testcode, or published.
 
 `local` mode retains current local triggers, planning, and parent publication.
 `central` mode rejects ambiguous simultaneous ownership: centrally supplied
@@ -234,20 +251,16 @@ the lab finishes cleanup, retains evidence, and reports a late-completion
 conflict for operator review; it never starts a duplicate assignment merely to
 repair coordination state.
 
-## Persistence prerequisite: immutable attempts
+## Implemented persistence prerequisite: immutable attempts
 
-Current persistence intent says retry preserves prior attempt history, but the
-current retry transition clears detail, pointer, child-result, and timing fields
-on the assignment row. Resolve this before building the central execution
-timeline.
-
-Introduce an `assignment_attempts` table keyed by immutable `attempt_id`, with
+The implementation adds an `assignment_attempts` table keyed by immutable
+`attempt_id`, with
 attempt number, status, timestamps, bounded detail, runner pointer metadata,
 child result ID/URL, archive metadata, and cleanup disposition. The assignment
 row becomes the stable work identity and exposes only current/aggregate state.
-Retry creates a new attempt; it never overwrites a terminal attempt. Migrate
-existing assignment evidence into attempt 1 and test reopen, rollback, recovery,
-and retry behavior.
+Retry creates a new attempt; it never overwrites a terminal attempt. Startup
+migration backfills existing assignment evidence into attempt 1; reopen,
+rollback, recovery, and retry behavior are covered by unit tests.
 
 ## API and service changes
 
@@ -315,30 +328,30 @@ Each step should be an independently reviewable change.
 
 ## Proof-of-concept acceptance
 
-- [ ] `local` and `central` are explicit, validated modes with no silent merge
+- [x] `local` and `central` are explicit, validated modes with no silent merge
   of definition ownership.
-- [ ] Registration and every heartbeat contain only allowlisted sanitized data.
-- [ ] The lab pulls and claims one matching offer exactly once across replay and
+- [x] Registration and every heartbeat contain only allowlisted sanitized data.
+- [x] The lab pulls and claims one matching offer exactly once across replay and
   restart.
-- [ ] An unmatched or unsafe private binding declines work without touching
+- [x] An unmatched or unsafe private binding declines work without touching
   hardware.
-- [ ] A matched fake binding creates a local run and renews its claim while
-  simulated work is active.
-- [ ] Completion contains the correct global, lab-execution, local-run,
+- [x] A matched fake binding creates a durable local execution/attempt, acquires
+  its private resources, and renews its claim while simulated work is active.
+- [x] Completion contains the correct global, lab-execution, local-run,
   assignment, attempt, and definition identities plus child links.
-- [ ] Public device evidence is grouped by platform/model class and exposes no
+- [x] Public device evidence is grouped by platform/model class and exposes no
   stable physical-device alias, local device/setup/profile identity, topology,
   address, pool identity, credential, or per-unit operational state.
-- [ ] The published completion contains full non-secret source provenance and
+- [x] The published completion contains full non-secret source provenance and
   is safe to expose unchanged; claim, lease, diagnostic, and private local
   state are stored separately.
-- [ ] Raw worker/orchestrator logs remain private; a published child log is a
+- [x] Raw worker/orchestrator logs remain private; a published child log is a
   distinct testcode-sanitized artifact with no device identifier.
-- [ ] Central loss or lease expiry never interrupts cleanup or causes duplicate
+- [x] Central loss or lease expiry never interrupts cleanup or causes duplicate
   local work.
-- [ ] Retry preserves every previous attempt and its evidence.
-- [ ] Existing local-mode unit behavior remains compatible.
-- [ ] No real network target, firmware, SSH worker, device, deployment, or
+- [x] Retry preserves every previous attempt and its evidence.
+- [x] Existing local-mode unit behavior remains compatible.
+- [x] No real network target, firmware, SSH worker, device, deployment, or
   publication is used.
 
 ## Verification

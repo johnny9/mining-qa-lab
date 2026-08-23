@@ -8,14 +8,16 @@
 | Durable ledger | Persist executions, cursors, claims, snapshots, attempts, cleanup disposition, and outbox | `src/mining_qa_lab/database.py` |
 | Agent/worker engine | Heartbeat, pull, claim, renew, bind, execute, and flush completion | `src/mining_qa_lab/central.py` |
 | Assignment boundary | Emit v2 metadata and consume the matching v2 pointer | `src/mining_qa_lab/central.py` |
-| Operator surface | Show central versus local truth and safe pause/recovery controls | planned integration into `src/mining_qa_lab/web.py` |
+| Operator surface | Show central versus local truth and safe pause/recovery controls | `src/mining_qa_lab/web.py` and `src/mining_qa_lab/cli.py` |
 
 ## Interfaces and contracts
 
 ### CLI
 
-- `central-once` processes one bounded page in central mode. `validate` rejects an
-  incomplete or ambiguous central configuration without network mutation.
+- `central-once` processes one bounded page in central mode. `central-agent`
+  runs the persistent heartbeat/pull/claim/outbox loop and supports a bounded
+  `--max-cycles` diagnostic mode. `validate` rejects an incomplete or ambiguous
+  central configuration without network mutation.
 - Pausing new central claims is an authenticated operator action and does not
   stop active cleanup.
 
@@ -33,6 +35,9 @@ coordination:
     heartbeat_seconds: 30
     poll_seconds: 10
     request_timeout_seconds: 10
+    retry_backoff_seconds: 2
+    max_backoff_seconds: 60
+    max_attempts: 3
     subscriptions:
       gates: [firmware-advisory]
 bindings:
@@ -40,6 +45,11 @@ bindings:
     gamma-http-and-stratum:
       profile: /private/profiles/gamma-read-write.toml
       testcode_root: /private/checkouts/mining-qa-testcode
+      testcode_commit: 0123456789abcdef0123456789abcdef01234567
+      platform_class: gamma
+      device_model: gamma-602
+      capabilities: [http, stratum-v1]
+      resources: [mock-gamma-east]
       mock_base_url_env: MINING_QA_MOCK_URL
 ```
 
@@ -71,9 +81,11 @@ timeouts, and at least one subscription/binding for work to be accepted.
 
 ### Files, artifacts, payloads, and persistent state
 
-- `central_executions`, `central_attempts`, and `central_outbox` plus the shared
-  source cursor persist executions, pull position, claim generations, definition/source
-  snapshots, private binding snapshots, assignment attempts, and outbox rows.
+- `central_executions`, `central_attempts`, `central_resource_leases`,
+  `central_agent_control`, and `central_outbox` plus the shared source cursor
+  persist executions, pull position, claim generations, definition/source
+  snapshots, private binding snapshots, assignment attempts, resource owners,
+  pause/backoff state, and outbox rows.
 - An assignment is stable work identity. `central_attempts` has immutable
   `attempt_id`, number, state, timing, bounded detail, pointer, child identity,
   archive metadata, and cleanup disposition.

@@ -13,8 +13,9 @@ interrupted work into explicit fail-closed states.
 
 ## Changelog
 
-- 2026-08-14: Recorded immutable assignment attempts as a prerequisite for the
-  proposed central coordination agent.
+- 2026-08-16: Normalized assignment and central execution attempts into
+  terminal-immutable rows, added restart backfill/migration coverage, and added
+  central resource leases plus persistent agent control state.
 - 2026-08-10: Added transactional remote-request idempotency for selected or
   whole-gate requeueing without overwriting attempt evidence.
 - 2026-08-10: Persisted archived artifact metadata per assignment attempt while

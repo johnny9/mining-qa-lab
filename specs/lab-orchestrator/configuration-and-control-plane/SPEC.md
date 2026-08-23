@@ -13,8 +13,10 @@ preventing lost updates and plaintext-secret storage.
 
 ## Changelog
 
-- 2026-08-14: Linked the proposed explicit central mode and private portable
-  requirement bindings without changing current schema-v1 behavior.
+- 2026-08-16: Implemented explicit central mode plus bounded private portable
+  requirement bindings, retry/backoff policy, exact Testcode commit, public
+  capability match, and private resource validation without changing local
+  mode behavior.
 - 2026-08-10: Linked private external configuration and sandboxed path
   allowances to the service-deployment contract.
 - 2026-08-10: Added optional testcode repository/ref policy and required
