@@ -38,6 +38,14 @@
 
 ## Verification evidence
 
+- 2026-08-27: An authorized production activation selected exact Lab commit
+  `9cd597e9c1869c32c8bfc5b9e95cedbc6540b00f`. The first start failed before
+  `ExecStart` with systemd `218/CAPABILITIES`; removing the non-portable
+  `ProtectKernelModules` user-unit directive produced an active/enabled service,
+  matching release provenance and config revision, API health `ok`, zero
+  running assignments, zero central failures, and zero active leases. No HIL or
+  rollback drill was performed, and the user manager still required a session
+  refresh to inherit `dialout`, so AC-10 remains open.
 - 2026-08-10: The standalone lab's 57-test unit suite passed with eight optional
   web-extra tests skipped, including temporary-home catalog installation,
   installer conflicts, bounded inspector behavior, shared safety wording,

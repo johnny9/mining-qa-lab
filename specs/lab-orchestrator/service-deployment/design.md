@@ -29,6 +29,11 @@
 - The example layout uses user-owned XDG-style config, state, library, and
   application directories; operators may choose other absolute paths by
   updating the unit and documentation together.
+- The portable user unit omits `ProtectKernelModules`: user services do not
+  hold `CAP_SYS_MODULE`, and some restricted user managers reject that
+  capability-bounding operation before `ExecStart`. Kernel-module policy is a
+  host responsibility; `NoNewPrivileges` and the remaining sandbox controls
+  stay enabled.
 
 ### Environment
 

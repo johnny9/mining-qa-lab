@@ -293,6 +293,8 @@ class SystemdTemplateTest(unittest.TestCase):
         self.assertIn("TimeoutStopSec=infinity", unit)
         self.assertIn("ProtectSystem=strict", unit)
         self.assertIn("ProtectHome=read-only", unit)
+        self.assertIn("NoNewPrivileges=true", unit)
+        self.assertNotIn("ProtectKernelModules=", unit)
         self.assertIn(
             "ReadOnlyPaths=-%h/.config/mining-qa-lab/orchestrator.env", unit
         )

@@ -28,7 +28,8 @@ ReadWritePaths=-%h/.local/state/mining-qa-lab
 ReadWritePaths=-%h/.local/state/mining-qa-testcode
 ReadWritePaths=-%h/.local/lib/mining-qa-testcode
 ProtectControlGroups=true
-ProtectKernelModules=true
+# User services already lack CAP_SYS_MODULE. ProtectKernelModules is omitted
+# because restricted user managers may fail before ExecStart with 218/CAPABILITIES.
 ProtectKernelTunables=true
 RestrictSUIDSGID=true
 LockPersonality=true

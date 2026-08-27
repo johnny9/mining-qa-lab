@@ -13,6 +13,9 @@ hardened systemd user service without losing configuration or durable state.
 
 ## Changelog
 
+- 2026-08-27: Removed the non-portable `ProtectKernelModules` user-unit
+  directive after live activation failed before `ExecStart`; retained
+  unprivileged execution and `NoNewPrivileges` as the portable boundary.
 - 2026-08-24: Extended idle inspection and update guidance to require a paused
   central agent with zero active private resource leases.
 - 2026-08-10: Split first-install and exact-SHA update agent workflows into

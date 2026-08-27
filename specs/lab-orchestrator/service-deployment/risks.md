@@ -43,6 +43,9 @@
 
 - Environment and API-token files grant service authority; use mode 0600,
   never print contents, and keep them outside source/releases.
+- The portable user unit does not attempt `ProtectKernelModules`; the
+  unprivileged service has no `CAP_SYS_MODULE`, retains `NoNewPrivileges`, and
+  relies on host policy for kernel-module controls.
 - Unit hardening must not hide missing USB permissions or broaden writable paths.
 - Planned updates wait for no active assignment. Forced recovery never asserts
   device cleanup; inspect hardware before retry.

@@ -142,6 +142,13 @@ and worker directories. The optional environment file is made read-only again
 inside the otherwise writable config directory. Add another writable path only
 when your reviewed YAML requires it.
 
+The user-service template also omits `ProtectKernelModules=true`. An
+unprivileged user service already lacks `CAP_SYS_MODULE`, while restricted user
+managers can fail before `ExecStart` with `218/CAPABILITIES` when asked to apply
+that system-service-oriented directive. Host policy remains responsible for
+kernel-module loading; the unit retains `NoNewPrivileges=true` and its other
+filesystem, syscall, and address-family restrictions.
+
 ## Check the service
 
 Use the read-only inspector:
