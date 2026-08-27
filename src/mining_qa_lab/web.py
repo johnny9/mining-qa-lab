@@ -8,6 +8,7 @@ import os
 import secrets
 import subprocess
 import threading
+import uuid
 from contextlib import asynccontextmanager
 from ipaddress import ip_address, ip_network
 from pathlib import Path
@@ -109,10 +110,12 @@ def create_app(
     central_stop = threading.Event()
 
     async def loop() -> None:
-        if store.snapshot.document["coordination"]["mode"] == "central":
+        mode = store.snapshot.document["coordination"]["mode"]
+        central_enabled = mode in {"central", "hybrid"}
+        worker: threading.Thread | None = None
+        failure: list[BaseException] = []
+        if central_enabled:
             from .central import run_central_forever
-
-            failure: list[BaseException] = []
 
             def central_worker() -> None:
                 try:
@@ -126,6 +129,7 @@ def create_app(
                 daemon=False,
             )
             worker.start()
+        if mode == "central" and worker is not None:
             while worker.is_alive():
                 await asyncio.sleep(0.1)
             worker.join()
@@ -152,6 +156,12 @@ def create_app(
                 await asyncio.wait_for(stop.wait(), timeout=2)
             except TimeoutError:
                 pass
+        if worker is not None:
+            while worker.is_alive():
+                await asyncio.sleep(0.1)
+            worker.join()
+            if failure:
+                raise failure[0]
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -221,27 +231,62 @@ def create_app(
             "queued_assignments": len(database.assignments(status="queued")),
             "running_assignments": len(database.assignments(status="running")),
             "central": database.central_agent_status()
-            if store.snapshot.document["coordination"]["mode"] == "central"
+            if store.snapshot.document["coordination"]["mode"] in {"central", "hybrid"}
             else None,
         }
 
     @app.get("/api/v1/central/status", dependencies=[Depends(authorize)])
     async def central_status() -> dict[str, Any]:
-        if store.snapshot.document["coordination"]["mode"] != "central":
+        if store.snapshot.document["coordination"]["mode"] not in {"central", "hybrid"}:
             raise HTTPException(status_code=409, detail="central coordination mode is not enabled")
         return database.central_agent_status()
 
     @app.post("/api/v1/central/pause", dependencies=[Depends(authorize)])
     async def pause_central() -> dict[str, Any]:
-        if store.snapshot.document["coordination"]["mode"] != "central":
+        if store.snapshot.document["coordination"]["mode"] not in {"central", "hybrid"}:
             raise HTTPException(status_code=409, detail="central coordination mode is not enabled")
         return database.set_central_agent_paused(True)
 
     @app.post("/api/v1/central/resume", dependencies=[Depends(authorize)])
     async def resume_central() -> dict[str, Any]:
-        if store.snapshot.document["coordination"]["mode"] != "central":
+        if store.snapshot.document["coordination"]["mode"] not in {"central", "hybrid"}:
             raise HTTPException(status_code=409, detail="central coordination mode is not enabled")
         return database.set_central_agent_paused(False)
+
+    @app.post("/api/v1/central/manual-run", dependencies=[Depends(authorize)])
+    async def central_manual_run(request: Request) -> dict[str, Any]:
+        if store.snapshot.document["coordination"]["mode"] not in {"central", "hybrid"}:
+            raise HTTPException(status_code=409, detail="central coordination mode is not enabled")
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=422, detail="body must be an object")
+        gate_id = body.get("gate_id")
+        source = body.get("source")
+        if not isinstance(gate_id, str) or not isinstance(source, dict):
+            raise HTTPException(status_code=422, detail="gate_id and source are required")
+        from .central import CentralSettings, CoordinationClient
+
+        settings = CentralSettings.from_store(store)
+        if gate_id not in settings.subscriptions:
+            raise HTTPException(status_code=422, detail="gate is not in local subscriptions")
+        payload = {
+            "contract_version": 2,
+            "idempotency_key": f"local-manual-{uuid.uuid4().hex}",
+            "gate_id": gate_id,
+            "source": source,
+            "selection": (
+                {"kind": "modules", "requirement_ids": body["test_modules"]}
+                if isinstance(body.get("test_modules"), list) and body["test_modules"]
+                else {"kind": "gate"}
+            ),
+        }
+        client = CoordinationClient(settings.base_url, settings.token, settings.timeout)
+        return await _run_in_worker(
+            client.request,
+            "POST",
+            f"/api/v2/labs/{quote(settings.lab_id)}/manual-runs",
+            payload,
+        )
 
     @app.get("/api/v1/config")
     async def get_config() -> Response:
@@ -446,6 +491,7 @@ def create_app(
         branch = body.get("branch")
         repository_id = body.get("repository_id")
         device_types = body.get("device_types")
+        test_modules = body.get("test_modules")
         if commit_sha is not None and not isinstance(commit_sha, str):
             raise HTTPException(status_code=422, detail="commit_sha must be a string")
         if branch is not None and not isinstance(branch, str):
@@ -459,6 +505,13 @@ def create_app(
             raise HTTPException(
                 status_code=422, detail="device_types must be a list of strings"
             )
+        if test_modules is not None and (
+            not isinstance(test_modules, list)
+            or not all(isinstance(item, str) for item in test_modules)
+        ):
+            raise HTTPException(
+                status_code=422, detail="test_modules must be a list of strings"
+            )
         try:
             return await _run_in_worker(
                 engine.manual_run,
@@ -467,6 +520,7 @@ def create_app(
                 branch or None,
                 repository_id=repository_id,
                 device_types=device_types,
+                test_modules=test_modules,
             )
         except ConfigError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -777,7 +831,7 @@ def create_app(
             store.snapshot,
             runs=database.list_gate_runs(limit=20),
             central_status=database.central_agent_status()
-            if store.snapshot.document["coordination"]["mode"] == "central"
+            if store.snapshot.document["coordination"]["mode"] in {"central", "hybrid"}
             else None,
         )
 

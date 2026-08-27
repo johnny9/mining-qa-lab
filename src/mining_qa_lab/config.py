@@ -214,15 +214,15 @@ def validate_config(document: Mapping[str, Any]) -> dict[str, Any]:
 
     coordination = _mapping(raw.setdefault("coordination", {}), "coordination")
     mode = coordination.setdefault("mode", "local")
-    if mode not in {"local", "central"}:
-        raise ConfigError("coordination.mode must be local or central")
+    if mode not in {"local", "central", "hybrid"}:
+        raise ConfigError("coordination.mode must be local, central, or hybrid")
     central = _mapping(coordination.setdefault("central", {}), "coordination.central")
     bindings = _mapping(raw.setdefault("bindings", {}), "bindings")
     suite_bindings = _mapping(
         bindings.setdefault("suite_requirements", {}),
         "bindings.suite_requirements",
     )
-    if mode == "central":
+    if mode in {"central", "hybrid"}:
         base_url = _string(central.get("base_url"), "coordination.central.base_url")
         parsed_url = urlsplit(base_url)
         loopback_names = {"127.0.0.1", "::1", "localhost"}

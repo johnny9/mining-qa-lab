@@ -17,6 +17,8 @@
   stale conditional mutations fail without changing disk.
 - [x] **ORCH-CONFIG-AC-06:** Gate runs retain their validated configuration
   snapshot and definition digest after later edits.
+- [x] **ORCH-CONFIG-AC-09:** Hybrid mode validates the complete central policy
+  and local definition graph in one snapshot without merging their identities.
 
 ## Quality attributes
 

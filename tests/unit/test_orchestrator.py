@@ -741,6 +741,7 @@ class SchedulingTest(unittest.TestCase):
                 "firmware-smoke",
                 repository_id="firmware",
                 device_types=["bitaxe_602"],
+                test_modules=["smoke"],
             )
             assignments = database.assignments(run["id"])
             event = database.list_events()[0]
@@ -749,7 +750,9 @@ class SchedulingTest(unittest.TestCase):
         self.assertEqual(run["commit_sha"], "b" * 40)
         self.assertEqual(run["branch"], "master")
         self.assertEqual({item["setup_id"] for item in assignments}, {"gamma-bench"})
+        self.assertEqual({item["module_id"] for item in assignments}, {"smoke"})
         self.assertEqual(event["payload"]["device_types"], ["bitaxe_602"])
+        self.assertEqual(event["payload"]["test_modules"], ["smoke"])
         self.assertEqual(event["payload"]["source_resolution"], "latest_project_branch")
 
     def test_executes_manual_gate_and_reads_existing_child_result_pointer(self) -> None:

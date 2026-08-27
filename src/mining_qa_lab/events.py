@@ -529,6 +529,7 @@ class EventCollector:
         branch: str | None,
         gate_id: str,
         device_types: list[str] | None = None,
+        test_modules: list[str] | None = None,
         source_resolution: str = "explicit_commit",
     ) -> dict[str, Any]:
         event, _ = self.database.create_event(
@@ -540,6 +541,7 @@ class EventCollector:
             payload={
                 "gate_id": gate_id,
                 "device_types": list(device_types or []),
+                "test_modules": list(test_modules or []),
                 "source_resolution": source_resolution,
             },
         )

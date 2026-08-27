@@ -115,6 +115,11 @@ class Planner:
                     for item in event["payload"].get("device_types", [])
                     if isinstance(item, str)
                 }
+                requested_modules = {
+                    str(item)
+                    for item in event["payload"].get("test_modules", [])
+                    if isinstance(item, str)
+                }
                 for setup_id in gate["targets"]["setups"]:
                     setup = lab["setups"][setup_id]
                     setup_types = {
@@ -127,6 +132,8 @@ class Planner:
                         continue
                     platform = _platform_key(setup, lab["devices"])
                     for module_id in gate["test_modules"]:
+                        if requested_modules and module_id not in requested_modules:
+                            continue
                         assignments.append(
                             {
                                 "setup_id": setup_id,
@@ -645,6 +652,7 @@ class OrchestratorEngine:
         *,
         repository_id: str | None = None,
         device_types: list[str] | None = None,
+        test_modules: list[str] | None = None,
     ) -> dict[str, Any]:
         config = self.config_store.snapshot.document
         if gate_id not in config["gates"]:
@@ -669,12 +677,25 @@ class OrchestratorEngine:
         ):
             raise ConfigError("commit_sha must be a full 40-character hexadecimal SHA")
         selected_types = self._manual_device_types(config, gate, device_types)
+        selected_modules = (
+            list(gate["test_modules"])
+            if test_modules is None
+            else list(dict.fromkeys(test_modules))
+        )
+        if not selected_modules:
+            raise ConfigError("select at least one test module")
+        unknown_modules = sorted(set(selected_modules) - set(gate["test_modules"]))
+        if unknown_modules:
+            raise ConfigError(
+                f"test modules are not available to this gate: {', '.join(unknown_modules)}"
+            )
         event = self.collector.manual(
             repository_id=gate["repository"],
             commit_sha=commit_sha.lower(),
             branch=branch,
             gate_id=gate_id,
             device_types=selected_types,
+            test_modules=selected_modules,
             source_resolution=source_resolution,
         )
         self.planner.plan(config)

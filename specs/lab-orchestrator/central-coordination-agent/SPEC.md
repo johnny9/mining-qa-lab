@@ -14,6 +14,8 @@ authority.
 
 ## Changelog
 
+- 2026-08-27: Added explicit hybrid mode so the central agent and local gate
+  engine can run together without merging shared and local definition identity.
 - 2026-08-27: Added exact Testcode catalog provenance, catalog module IDs and
   portable option selections to central offers, with local binding validation
   and independent Testcode revalidation before device construction.

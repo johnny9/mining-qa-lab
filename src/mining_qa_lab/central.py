@@ -343,8 +343,8 @@ class CentralSettings:
     def from_store(cls, store: ConfigStore) -> "CentralSettings":
         document = store.snapshot.document
         coordination = document["coordination"]
-        if coordination["mode"] != "central":
-            raise ConfigError("central-once requires coordination.mode: central")
+        if coordination["mode"] not in {"central", "hybrid"}:
+            raise ConfigError("central-once requires coordination.mode: central or hybrid")
         central = coordination["central"]
         token_env = str(central.get("token_env", "MINING_QA_TOKEN"))
         token = os.environ.get(token_env, "").strip()
@@ -1527,8 +1527,8 @@ def register_central_lab(
     agent_environment_file: Path,
 ) -> dict[str, str]:
     document = store.snapshot.document
-    if document["coordination"]["mode"] != "central":
-        raise ConfigError("central registration requires coordination.mode: central")
+    if document["coordination"]["mode"] not in {"central", "hybrid"}:
+        raise ConfigError("central registration requires coordination.mode: central or hybrid")
     label = public_label.strip()
     if not label or len(label) > 80 or any(ord(character) < 32 for character in label):
         raise ConfigError("central public label must be 1-80 printable characters")

@@ -13,6 +13,8 @@ preventing lost updates and plaintext-secret storage.
 
 ## Changelog
 
+- 2026-08-27: Added hybrid coordination mode, preserving validated local gate
+  definitions while enabling central bindings and agent settings concurrently.
 - 2026-08-16: Implemented explicit central mode plus bounded private portable
   requirement bindings, retry/backoff policy, exact Testcode commit, public
   capability match, and private resource validation without changing local

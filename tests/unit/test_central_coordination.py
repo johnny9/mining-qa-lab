@@ -13,6 +13,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import yaml
+
 from mining_qa_lab.central import (
     MAX_RUNNER_OUTPUT_BYTES,
     CentralAgent,
@@ -24,7 +26,7 @@ from mining_qa_lab.central import (
     run_central_forever,
     validate_offer,
 )
-from mining_qa_lab.config import validate_config
+from mining_qa_lab.config import ConfigStore, validate_config
 from mining_qa_lab.database import OrchestratorDatabase
 from mining_qa_lab.errors import ConfigError
 
@@ -177,6 +179,21 @@ class CentralConfigurationTest(unittest.TestCase):
             }
             with self.assertRaisesRegex(ConfigError, "cannot merge"):
                 validate_config(document)
+
+            document["coordination"]["mode"] = "hybrid"
+            normalized = validate_config(document)
+            self.assertEqual(normalized["coordination"]["mode"], "hybrid")
+            self.assertIn("local", normalized["repositories"])
+
+    def test_hybrid_settings_use_the_existing_central_token(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            document = self.central_document(Path(directory))
+            document["coordination"]["mode"] = "hybrid"
+            path = Path(directory) / "hybrid.yaml"
+            path.write_text(yaml.safe_dump(document), encoding="utf-8")
+            with patch.dict("os.environ", {"TEST_LAB_TOKEN": "mqa_" + "a" * 43}):
+                settings = CentralSettings.from_store(ConfigStore(path))
+            self.assertEqual(settings.lab_id, "lab-east")
 
     def test_binding_execution_mode_is_explicit_and_disjoint(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

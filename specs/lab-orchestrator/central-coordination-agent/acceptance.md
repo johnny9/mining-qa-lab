@@ -2,8 +2,9 @@
 
 ## Functional behavior
 
-- [x] **ORCH-CENTRAL-AC-01:** `local` and `central` are explicit validated modes;
-  centrally supplied definitions cannot silently merge with local ownership.
+- [x] **ORCH-CENTRAL-AC-01:** `local`, `central`, and `hybrid` are explicit
+  validated modes. Hybrid runs central and local workers together while shared
+  and local definition identities remain separate.
 - [x] **ORCH-CENTRAL-AC-02:** Registration, heartbeat, subscriptions, pull,
   claim, renewal, decline, and completion implement the exact Status/Lab v2
   contract.
@@ -59,6 +60,9 @@
   repository/commit provenance, module ID, and only declared bounded portable
   options. The Lab rejects provenance drift, forwards the selection in a
   dedicated runner contract value, and Testcode revalidates before device use.
+- [x] **ORCH-CENTRAL-AC-21:** An authenticated local operator in hybrid mode can
+  request a shared manual gate through the existing Lab-bound token. Status
+  may target only that same Lab; the request cannot fan out or name another Lab.
 
 ## Quality attributes
 

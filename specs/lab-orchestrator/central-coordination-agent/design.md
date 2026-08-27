@@ -60,14 +60,17 @@ bindings:
       resources: [device:gamma-02]
 ```
 
-`mode` is `local` or `central` and defaults to `local`. Central mode requires
+`mode` is `local`, `central`, or `hybrid` and defaults to `local`. Central and
+hybrid modes require
 HTTPS except loopback integration, named token environment, positive bounded
 timeouts, and at least one subscription/binding for work to be accepted. Every
 binding requires `execution: mock | hardware`. A mock binding replaces the
 hardware-only executable/devices with `mock_base_url_env` and is accepted only
 when that environment and the central Status service both resolve to loopback.
 Hardware bindings never receive mock reset behavior or integration-only
-environment variables.
+environment variables. Hybrid mode also validates and retains local
+repositories/modules/gates; their snapshots and local execution ledger do not
+become central definitions.
 
 ### Environment
 
@@ -142,6 +145,8 @@ environment variables.
   solely to repair central state.
 - Do not let central mode reinterpret, upload, or delete existing local
   definitions.
+- Do not let a hybrid Lab-token manual request target another Lab or use global
+  fanout. Local operator authorization is delegated only for the bound Lab.
 - Do not automatically retry a hardware binding after process launch or infer
   physical cleanup from process exit, lease release, or a central claim state.
 
@@ -191,8 +196,8 @@ the idempotency key and bounded response code.
 
 Ship the app-issued-token registration reader before using the new Admin token.
 Existing proof-of-concept bindings declare `execution: mock`; ambiguity fails
-validation. Local mode remains unchanged. Rollback pauses/disables the central
-loop while preserving additive state and historical evidence.
+validation. Local mode remains unchanged. Hybrid rollback selects local mode or
+pauses the central loop while preserving both local and central evidence.
 
 ## Resource and operational constraints
 
