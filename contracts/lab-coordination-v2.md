@@ -57,13 +57,23 @@ Status freezes this object when it creates a gate run:
   "suite": {
     "id": "mock-device-smoke",
     "revision_id": "suite-rev-0001",
+    "testcode_catalog": {
+      "repository": "johnny9/mining-qa-testcode",
+      "ref": "main",
+      "commit_sha": "89abcdef0123456789abcdef0123456789abcdef"
+    },
     "requirements": [
       {
         "requirement_id": "gamma-http-and-stratum",
+        "module_id": "public_pool_smoke",
         "platform_class": "gamma-600",
         "device_model": "Gamma 602",
         "capabilities": ["http", "stratum-v1"],
-        "test_pattern": "test_integration_smoke.py"
+        "test_pattern": "test_public_pool_smoke.py",
+        "options": {
+          "stable_samples": 10,
+          "require_accepted_share": false
+        }
       }
     ]
   },
@@ -88,6 +98,15 @@ of at most 80 characters; `test_pattern` is 1–200 characters and cannot contai
 path traversal, shell syntax, control characters, or whitespace-delimited
 extra arguments. The definition describes intent, never a shell command,
 hostname, credential, local path, setup, profile, or physical device.
+`module_id` and `options` are optional for reader compatibility. When present,
+they identify one module from the exact `testcode_catalog` source and carry at
+most 64 catalog-declared boolean, bounded-integer, or bounded-string values.
+Option keys cannot describe private hosts, paths, devices, credentials, pools,
+users, tokens, commands, or environment-variable names. The Lab requires the
+catalog repository and commit to match its trusted Testcode binding, then passes
+only that module selection to Testcode for independent revalidation before
+device construction. Trigger `type` is `manual`, `push`, or `pull_request`;
+Status alone maps signed repository events to the latter two types.
 
 ## Source target
 

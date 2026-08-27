@@ -24,9 +24,19 @@
   terminal/recovery transitions, cancel, and retry.
 - [ ] **ORCH-STATE-AC-08:** A service-kill recovery drill on the lab host has
   confirmed expected database and physical-device operator workflow.
+- [x] **ORCH-STATE-AC-09:** Central retry bounds are enforced per stable
+  requirement assignment while attempt ordinals remain unique within the Lab
+  execution; restart preserves completed module pointers and does not rerun
+  them.
 
 ## Verification evidence
 
+- The 86-test Lab unit suite passed on 2026-08-27. Focused central tests prove
+  retry limits per stable requirement assignment, globally unique attempt
+  ordinals, SQLite reopen, and restart resume that retains the first module's
+  pointer while executing only the unfinished module. Status-owned simulation
+  `20260827T135058.254730Z` passed replay and Lab restart scenarios with one
+  attempt and child per module per Lab.
 - `tests.unit.test_orchestrator` covers persistence, leases, recovery, and state
   transitions, including terminal-immutable attempt history across retry and
   reopen; reconciled 2026-08-16.

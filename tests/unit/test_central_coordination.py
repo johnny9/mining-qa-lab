@@ -244,6 +244,49 @@ class CentralContractTest(unittest.TestCase):
             )
         )
 
+    def test_offer_accepts_catalog_modules_options_and_repository_triggers(self) -> None:
+        value = offer()
+        value["definition"]["suite"]["testcode_catalog"] = {
+            "repository": "johnny9/mining-qa-testcode",
+            "ref": "main",
+            "commit_sha": "a" * 40,
+        }
+        requirement = value["definition"]["suite"]["requirements"][0]
+        requirement["module_id"] = "public_pool_smoke"
+        requirement["options"] = {"stable_samples": 4, "require_accepted_share": True}
+        value["definition"]["trigger"]["type"] = "push"
+        value["definition_digest"] = canonical_digest(value["definition"])
+
+        self.assertEqual(validate_offer(value, "lab-east"), value)
+
+        settings = CentralSettings(
+            base_url="http://127.0.0.1:3000",
+            lab_id="lab-east",
+            token="private-agent-token",
+            timeout=1,
+            subscriptions=("firmware-advisory",),
+            state_dir=Path("/tmp/unused-central-test"),
+            bindings={"gamma-http-and-stratum": dict(BINDING_FIELDS)},
+            heartbeat_seconds=30,
+            poll_seconds=1,
+            retry_backoff_seconds=1,
+            max_retry_backoff_seconds=2,
+            max_attempts=1,
+        )
+        agent = CentralAgent.__new__(CentralAgent)
+        agent.settings = settings
+        self.assertIsNotNone(agent._binding(value))
+        value["definition"]["suite"]["testcode_catalog"]["commit_sha"] = "b" * 40
+        self.assertIsNone(agent._binding(value))
+
+        unsafe = offer()
+        unsafe_requirement = unsafe["definition"]["suite"]["requirements"][0]
+        unsafe_requirement["module_id"] = "public_pool_smoke"
+        unsafe_requirement["options"] = {"password": "private"}
+        unsafe["definition_digest"] = canonical_digest(unsafe["definition"])
+        with self.assertRaisesRegex(ValueError, "private or unsafe"):
+            validate_offer(unsafe, "lab-east")
+
     def test_cursor_offer_attempt_and_outbox_survive_reopen_without_duplicates(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "orchestrator.sqlite3"
@@ -316,6 +359,195 @@ class CentralContractTest(unittest.TestCase):
             self.assertTrue(reopened.central_agent_status()["paused"])
             self.assertEqual(reopened.central_outbox("execution-1")["state"], "pending")
             reopened.close()
+
+    def test_central_attempt_limit_is_per_requirement_assignment(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = OrchestratorDatabase(Path(directory) / "orchestrator.sqlite3")
+            database.persist_central_page(lab_id="lab-east", cursor="1", offers=[offer()])
+            database.start_central_attempt(
+                execution_id="execution-1",
+                assignment_id="assignment-module-a",
+                attempt_id="attempt-module-a-1",
+                started_at=datetime.now(UTC).isoformat(),
+                max_attempts=1,
+            )
+            second, created = database.start_central_attempt(
+                execution_id="execution-1",
+                assignment_id="assignment-module-b",
+                attempt_id="attempt-module-b-1",
+                started_at=datetime.now(UTC).isoformat(),
+                max_attempts=1,
+            )
+            self.assertTrue(created)
+            self.assertEqual(second["attempt"], 2)
+            with self.assertRaisesRegex(ValueError, "central assignment exceeded"):
+                database.start_central_attempt(
+                    execution_id="execution-1",
+                    assignment_id="assignment-module-a",
+                    attempt_id="attempt-module-a-2",
+                    started_at=datetime.now(UTC).isoformat(),
+                    max_attempts=1,
+                )
+            database.close()
+
+    def test_multi_module_plan_resumes_completed_module_and_publishes_all_children(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = OrchestratorDatabase(root / "orchestrator.sqlite3")
+            value = offer()
+            second_requirement = {
+                "requirement_id": "gamma-api-regression",
+                "platform_class": "gamma-600",
+                "device_model": "Gamma 602",
+                "capabilities": ["api"],
+                "test_pattern": "test_api_regression.py",
+            }
+            value["definition"]["suite"]["requirements"].append(second_requirement)
+            value["definition_digest"] = canonical_digest(value["definition"])
+            database.persist_central_page(lab_id="lab-east", cursor="1", offers=[value])
+            database.update_central_execution(
+                "execution-1",
+                state="claimed",
+                claim_id="claim-1",
+                claim_generation=1,
+                claim_token="private-claim-token",
+                claim_expires_at=(datetime.now(UTC) + timedelta(minutes=2)).isoformat(),
+            )
+            bindings = {
+                "gamma-http-and-stratum": {
+                    "execution": "mock",
+                    "testcode_commit": "a" * 40,
+                    **BINDING_FIELDS,
+                },
+                "gamma-api-regression": {
+                    "execution": "mock",
+                    "testcode_commit": "a" * 40,
+                    **BINDING_FIELDS,
+                },
+            }
+            settings = CentralSettings(
+                base_url="http://127.0.0.1:3000",
+                lab_id="lab-east",
+                token="private-agent-token",
+                timeout=1,
+                subscriptions=("firmware-advisory",),
+                state_dir=root,
+                bindings=bindings,
+                heartbeat_seconds=30,
+                poll_seconds=1,
+                retry_backoff_seconds=0.001,
+                max_retry_backoff_seconds=0.002,
+                max_attempts=2,
+            )
+            agent = CentralAgent(settings, database)
+            binding_plan = agent._binding(value)
+            self.assertIsNotNone(binding_plan)
+            self.assertEqual(
+                [item["requirement"]["requirement_id"] for item in binding_plan["items"]],
+                ["gamma-http-and-stratum", "gamma-api-regression"],
+            )
+            assignment_a = agent._assignment_id(
+                "execution-1",
+                value["definition"]["suite"]["requirements"][0],
+                2,
+            )
+            attempt_a = _stable_id("attempt", f"{assignment_a}:1")
+
+            def pointer(assignment_id: str, attempt_id: str, suffix: str, status: str) -> dict:
+                return {
+                    "contract_version": 2,
+                    "run_id": f"runner-{suffix}",
+                    "successful": status in {"passed", "skipped"},
+                    "status": status,
+                    "publishers": [
+                        {
+                            "name": "mining_qa_status",
+                            "success": True,
+                            "required": True,
+                            "result_id": f"child-{suffix}",
+                            "url": f"http://127.0.0.1:3000/results/child-{suffix}",
+                        }
+                    ],
+                    "correlation": {
+                        "central_gate_run_id": "run-1",
+                        "lab_id": "lab-east",
+                        "lab_execution_id": "execution-1",
+                        "local_gate_run_id": _stable_id("local", "execution-1"),
+                        "assignment_id": assignment_id,
+                        "attempt_id": attempt_id,
+                        "definition_digest": value["definition_digest"],
+                    },
+                }
+
+            started_a = datetime.now(UTC).isoformat()
+            database.start_central_attempt(
+                execution_id="execution-1",
+                assignment_id=assignment_a,
+                attempt_id=attempt_a,
+                started_at=started_a,
+            )
+            database.finish_central_attempt(
+                attempt_id=attempt_a,
+                state="passed",
+                completed_at=started_a,
+                pointer=pointer(assignment_a, attempt_a, "module-a", "passed"),
+                cleanup_disposition="restored",
+            )
+            agent._renew = Mock()
+            agent._preflight = Mock(
+                return_value=RunnerPreflight(
+                    root,
+                    root / "profile.toml",
+                    None,
+                    "a" * 40,
+                    "main",
+                )
+            )
+            agent._flush = Mock(return_value="completed")
+
+            def run_second(_execution, _binding, _behavior, requirement, assignment_id):
+                self.assertEqual(requirement["requirement_id"], "gamma-api-regression")
+                attempt_id = _stable_id("attempt", f"{assignment_id}:1")
+                started_at = datetime.now(UTC).isoformat()
+                database.start_central_attempt(
+                    execution_id="execution-1",
+                    assignment_id=assignment_id,
+                    attempt_id=attempt_id,
+                    started_at=started_at,
+                )
+                completed_at = datetime.now(UTC).isoformat()
+                result_pointer = pointer(
+                    assignment_id,
+                    attempt_id,
+                    "module-b",
+                    "failed",
+                )
+                database.finish_central_attempt(
+                    attempt_id=attempt_id,
+                    state="failed",
+                    completed_at=completed_at,
+                    pointer=result_pointer,
+                    cleanup_disposition="restored",
+                )
+                return result_pointer, started_at, completed_at, "a" * 40, "main"
+
+            agent._run_testcode = Mock(side_effect=run_second)
+            outcome = agent._execute_with_lease(
+                database.central_execution("execution-1"),
+                binding_plan,
+                phase="run",
+                behavior="pass",
+            )
+
+            self.assertEqual(outcome, "completed")
+            agent._run_testcode.assert_called_once()
+            completion = database.central_outbox("execution-1")["body"]
+            self.assertEqual(completion["published_completion"]["outcome"], "failed")
+            self.assertEqual(
+                [child["result_id"] for child in completion["published_completion"]["children"]],
+                ["child-module-a", "child-module-b"],
+            )
+            database.close()
 
     def test_durable_outbox_flush_precedes_mutable_binding_and_preflight(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -422,6 +654,18 @@ class CentralContractTest(unittest.TestCase):
             profile.write_text("", encoding="utf-8")
             database = OrchestratorDatabase(state_dir / "orchestrator.sqlite3")
             value = offer()
+            value["definition"]["suite"]["testcode_catalog"] = {
+                "repository": "johnny9/mining-qa-testcode",
+                "ref": "main",
+                "commit_sha": "a" * 40,
+            }
+            value["definition"]["suite"]["requirements"][0].update(
+                {
+                    "module_id": "public_pool_smoke",
+                    "options": {"stable_samples": 4},
+                }
+            )
+            value["definition_digest"] = canonical_digest(value["definition"])
             database.persist_central_page(lab_id="lab-east", cursor="1", offers=[value])
             database.update_central_execution(
                 "execution-1",
@@ -551,6 +795,18 @@ class CentralContractTest(unittest.TestCase):
             executable.chmod(0o700)
             database = OrchestratorDatabase(state_dir / "orchestrator.sqlite3")
             value = offer()
+            value["definition"]["suite"]["testcode_catalog"] = {
+                "repository": "johnny9/mining-qa-testcode",
+                "ref": "main",
+                "commit_sha": "a" * 40,
+            }
+            value["definition"]["suite"]["requirements"][0].update(
+                {
+                    "module_id": "public_pool_smoke",
+                    "options": {"stable_samples": 4},
+                }
+            )
+            value["definition_digest"] = canonical_digest(value["definition"])
             database.persist_central_page(lab_id="lab-east", cursor="1", offers=[value])
             database.update_central_execution(
                 "execution-1",
@@ -688,6 +944,14 @@ class CentralContractTest(unittest.TestCase):
             self.assertNotIn("UNRELATED_SECRET", runner_environment)
             self.assertNotIn("MINING_QA_MOCK_URL", runner_environment)
             self.assertNotIn("MINING_QA_INTEGRATION_DEVELOPMENT", runner_environment)
+            self.assertEqual(
+                json.loads(runner_environment["MINER_TEST_MODULE_OPTIONS"]),
+                {
+                    "schema_version": 1,
+                    "module_id": "public_pool_smoke",
+                    "values": {"stable_samples": 4},
+                },
+            )
             database.close()
 
     def test_hardware_failure_is_terminal_without_automatic_retry(self) -> None:

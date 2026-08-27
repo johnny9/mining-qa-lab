@@ -492,8 +492,12 @@ class OrchestratorDatabase:
                 (execution_id,),
             ).fetchone()[0]
             attempt = int(latest or 0) + 1
-            if attempt > max_attempts:
-                raise ValueError("central execution exceeded its bounded attempt count")
+            assignment_attempts = connection.execute(
+                "select count(*) from central_attempts where assignment_id = ?",
+                (assignment_id,),
+            ).fetchone()[0]
+            if int(assignment_attempts) >= max_attempts:
+                raise ValueError("central assignment exceeded its bounded attempt count")
             cursor = connection.execute(
                 """
                 insert into central_attempts(
@@ -653,6 +657,19 @@ class OrchestratorDatabase:
         rows = self._connection.execute(
             "select * from central_attempts where lab_execution_id = ? order by attempt",
             (execution_id,),
+        ).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            value = dict(row)
+            if value.get("pointer_json"):
+                value["pointer"] = json.loads(value.pop("pointer_json"))
+            result.append(value)
+        return result
+
+    def central_attempts_for_assignment(self, assignment_id: str) -> list[dict[str, Any]]:
+        rows = self._connection.execute(
+            "select * from central_attempts where assignment_id = ? order by attempt",
+            (assignment_id,),
         ).fetchall()
         result: list[dict[str, Any]] = []
         for row in rows:

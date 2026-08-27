@@ -24,21 +24,26 @@ runner cleanup and if private topology never leaves the Lab.
 ## Desired outcome
 
 An explicit central-mode agent registers sanitized capability, pulls and
-claims one valid offer exactly once, freezes one private binding, executes
-through immutable attempts, renews while active, and submits an idempotent
-sanitized completion. A binding explicitly selects either loopback simulation
-or a locally authorized hardware runner; central input can never choose that
-execution class, profile, executable, device, environment, or resource. Local
-mode remains compatible and independently usable.
+claims one valid offer exactly once, freezes one ordered private binding per
+selected requirement, executes each module through immutable attempts, renews
+while active, and submits one idempotent sanitized completion. Every binding
+explicitly selects either loopback simulation or a locally authorized hardware
+runner; central input can never choose that execution class, profile,
+executable, device, environment, or resource. Local mode remains compatible
+and independently usable.
 
 ## Primary flow
 
 1. Validate central configuration, bind one app-issued Lab token, heartbeat,
    replace subscriptions, and persist the pull cursor.
-2. Validate and persist an offer, claim it, resolve exactly one private
-   binding, acquire local resources, and create a v2 Testcode attempt.
-3. Persist cleanup and child pointer, submit one completion through the outbox,
-   and retain correlation/evidence across restart.
+2. Validate and persist an offer, claim it, resolve every selected requirement
+   to exactly one private binding, acquire the union of local resources, and
+   create stable v2 Testcode assignments in suite order.
+3. Persist cleanup and child pointer per module, submit one completion through
+   the outbox, and retain partial progress/correlation/evidence across restart.
+4. Require each catalog-backed module to match the Lab's exact trusted Testcode
+   repository/commit and pass only its catalog-declared portable options to the
+   runner; private profiles remain authoritative for all device and secret data.
 
 ## Alternate and failure flows
 

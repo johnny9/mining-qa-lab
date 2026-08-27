@@ -54,6 +54,9 @@
   exact selected assignments, so claim redelivery cannot reapply the mutation.
 - Artifact rows and archive directories remain attempt-specific; retry never
   overwrites a prior attempt's retained evidence.
+- Central multi-module execution uses one stable assignment per selected
+  requirement. Retry bounds are counted by assignment, while attempt ordinals
+  remain unique and ordered within the containing central execution.
 
 ### Forbidden behavior
 

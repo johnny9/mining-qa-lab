@@ -83,9 +83,9 @@ environment variables.
 ### Python API
 
 - Typed immutable DTOs mirror the coordination contract.
-- Binding resolution accepts a validated portable requirement and frozen Lab
-  config, returning one private immutable execution snapshot or a bounded
-  decline code.
+- Binding resolution accepts all validated portable requirements and frozen
+  Lab config, returning an ordered immutable requirement-to-binding plan or a
+  bounded decline code. Every requirement must match exactly one binding.
 - Outbox operations are explicit and idempotency-keyed.
 
 ### HTTP or external protocols
@@ -100,7 +100,8 @@ environment variables.
 - `central_executions`, `central_attempts`, `central_resource_leases`,
   `central_agent_control`, and `central_outbox` plus the shared source cursor
   persist executions, pull position, claim generations, definition/source
-  snapshots, private binding snapshots, assignment attempts, resource owners,
+  snapshots, private binding-plan snapshots, per-requirement assignment
+  attempts, resource owners,
   pause/backoff state, and outbox rows.
 - An assignment is stable work identity. `central_attempts` has immutable
   `attempt_id`, number, state, timing, bounded detail, pointer, child identity,
@@ -116,11 +117,16 @@ environment variables.
   duplicate-work guard.
 - Capability advertisement is an eligibility hint, never authorization or
   proof of a safe binding.
-- Freeze private binding and source/definition snapshots before local lease or
-  runner construction.
+- Freeze the complete ordered private binding plan and source/definition
+  snapshots before local lease or runner construction.
 - Acquire every local resource before Testcode installation/deployment/run.
-- Revalidate the exact clean Testcode checkout, executable, profile, and private
-  device selectors after lease acquisition and before runner launch.
+- Revalidate every plan item's exact clean Testcode checkout, executable,
+  profile, and private device selectors after lease acquisition and before its
+  runner launch.
+- If the portable suite carries Testcode catalog provenance, require its
+  repository and commit to match every private binding. Pass a bounded
+  `MINER_TEST_MODULE_OPTIONS` selection only for the matching module; Testcode
+  revalidates it before constructing devices.
 - Persist terminal attempt and cleanup disposition before resource release and
   completion enqueue.
 - Every v2 pointer correlation field must equal its immutable attempt input.
@@ -143,9 +149,10 @@ environment variables.
 
 Central execution follows `received -> binding -> queued -> running ->
 terminal`. Status claim state is separately mirrored with generation and
-expiry. Assignment attempts follow `queued -> running -> passed | failed |
-error | skipped`. Completion outbox state follows `pending -> delivered |
-conflict`, retaining the idempotency key and bounded response code.
+expiry. Each selected requirement has one stable assignment and immutable
+attempts following `queued -> running -> passed | failed | error | skipped`.
+Completion outbox state follows `pending -> delivered | conflict`, retaining
+the idempotency key and bounded response code.
 
 ## Control and data flow
 
@@ -153,11 +160,16 @@ conflict`, retaining the idempotency key and bounded response code.
 2. Validate offer/digest/source/deadline, transactionally insert the unique
    central execution plus returned cursor, and decline safely before claim when
    no portable/local policy match exists.
-3. Claim, freeze binding, create local run/matrix, and acquire resources.
-4. Emit exact v2 metadata and portable pattern with private device selectors,
-   execute Testcode through the selected binding class, validate the pointer,
-   persist attempt and cleanup disposition, then release resources.
-5. Build allowlisted completion, enqueue it transactionally, and retry safely
+3. Claim, freeze the ordered binding plan, create stable per-requirement
+   assignments, and atomically acquire the union of all private resources.
+4. In suite order, emit exact v2 metadata and that requirement's portable
+   pattern with its private device selectors, execute Testcode through the
+   selected binding class, validate the pointer, and persist the immutable
+   attempt plus cleanup disposition. Restart skips only requirements with a
+   publishable terminal pointer.
+5. Aggregate the module statuses, build one allowlisted completion with one
+   child per selected requirement, enqueue it transactionally, release the
+   resource union only after terminal persistence, and retry delivery safely
    until delivered or a permanent/late conflict is recorded.
 
 ## Failure and recovery
@@ -168,8 +180,9 @@ conflict`, retaining the idempotency key and bounded response code.
   fail-closed under existing recovery and never silently resumes.
 - Missing/malformed pointer or process failure after a hardware launch produces
   one terminal local attempt and a sanitized error completion when the claim is
-  still usable. Automatic retries remain available only to deterministic mock
-  integration bindings.
+  still usable. No later module launches after an uncertain hardware failure.
+  Automatic retries remain available only to deterministic mock integration
+  bindings and are counted per stable requirement assignment.
 - Central outage uses bounded exponential backoff and a bounded durable outbox.
 - Claim expiry during active work allows cleanup to finish; completion conflict
   remains visible and local evidence stays immutable.
@@ -200,8 +213,9 @@ subprocess, and hardware operations outside write transactions.
 ## Verification approach
 
 Unit-test schema, DTO limits, allowlists, transitions, unique/replay behavior,
-SQLite reopen, outbox, expiry, immutable attempts, binding rejection, mock/real
-command and environment separation, output bounds, terminal hardware failure,
-exact v2 environment/pointer equality, and local-mode compatibility. Then run
-the Status-owned full local matrix with two processes and mock devices. A real
-Lab requires a separate authorized preflight/HIL and cleanup observation.
+SQLite reopen, outbox, expiry, immutable per-requirement attempts, complete-plan
+binding rejection, multi-module ordering/recovery/completion, mock/real command
+and environment separation, output bounds, terminal hardware failure, exact v2
+environment/pointer equality, and local-mode compatibility. Then run the
+Status-owned full local matrix with two processes and mock devices. A real Lab
+requires a separate authorized preflight/HIL and cleanup observation.

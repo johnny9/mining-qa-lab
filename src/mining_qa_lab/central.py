@@ -48,6 +48,7 @@ _CONTRACT_ENVIRONMENT = frozenset(
         "GITHUB_SHA",
         "GITHUB_REF_NAME",
         "MINER_TEST_PR_NUMBER",
+        "MINER_TEST_MODULE_OPTIONS",
     }
 )
 _OPAQUE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -55,6 +56,10 @@ _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _AGENT_TOKEN = re.compile(r"^mqa_[A-Za-z0-9_-]{16,120}$")
+_PRIVATE_OPTION_PART = re.compile(
+    r"address|command|credential|device|endpoint|environment|host|password|path|pool|secret|serial|token|url|user|worker",
+    re.IGNORECASE,
+)
 _OFFER_KEYS = frozenset(
     {
         "central_gate_run_id",
@@ -168,6 +173,20 @@ def _strict_object(value: Any, keys: frozenset[str], context: str) -> dict[str, 
     return value
 
 
+def _strict_object_with_optional(
+    value: Any,
+    required: frozenset[str],
+    optional: frozenset[str],
+    context: str,
+) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{context} has invalid fields")
+    actual = frozenset(value)
+    if not required.issubset(actual) or not actual.issubset(required | optional):
+        raise ValueError(f"{context} has invalid fields")
+    return value
+
+
 def _opaque(value: Any, context: str) -> str:
     if not isinstance(value, str) or not _OPAQUE.fullmatch(value):
         raise ValueError(f"{context} is not an opaque identifier")
@@ -198,8 +217,11 @@ def validate_offer(value: Any, expected_lab: str) -> dict[str, Any]:
     )
     project = _strict_object(definition["project"], frozenset({"id", "repository"}), "project")
     gate = _strict_object(definition["gate"], frozenset({"id", "revision_id"}), "gate")
-    suite = _strict_object(
-        definition["suite"], frozenset({"id", "revision_id", "requirements"}), "suite"
+    suite = _strict_object_with_optional(
+        definition["suite"],
+        frozenset({"id", "revision_id", "requirements"}),
+        frozenset({"testcode_catalog"}),
+        "suite",
     )
     trigger = _strict_object(
         definition["trigger"], frozenset({"id", "revision_id", "type"}), "trigger"
@@ -207,17 +229,46 @@ def validate_offer(value: Any, expected_lab: str) -> dict[str, Any]:
     for item, fields in ((project, ("id",)), (gate, ("id", "revision_id")), (suite, ("id", "revision_id")), (trigger, ("id", "revision_id"))):
         for field in fields:
             _opaque(item[field], field)
-    if not _REPOSITORY.fullmatch(str(project["repository"])) or trigger["type"] != "manual":
+    if (
+        not _REPOSITORY.fullmatch(str(project["repository"]))
+        or trigger["type"] not in {"manual", "push", "pull_request"}
+    ):
         raise ValueError("portable project or trigger is invalid")
+    if "testcode_catalog" in suite:
+        catalog_source = _strict_object(
+            suite["testcode_catalog"],
+            frozenset({"repository", "ref", "commit_sha"}),
+            "suite.testcode_catalog",
+        )
+        if (
+            not _REPOSITORY.fullmatch(str(catalog_source.get("repository", "")))
+            or not isinstance(catalog_source.get("ref"), str)
+            or not 1 <= len(catalog_source["ref"]) <= 255
+            or not _SHA.fullmatch(str(catalog_source.get("commit_sha", "")))
+        ):
+            raise ValueError("suite.testcode_catalog is invalid")
     requirements = suite["requirements"]
     if not isinstance(requirements, list) or not 1 <= len(requirements) <= 32:
         raise ValueError("suite.requirements is invalid")
     requirement_keys = frozenset(
-        {"requirement_id", "platform_class", "device_model", "capabilities", "test_pattern"}
+        {
+            "requirement_id",
+            "platform_class",
+            "device_model",
+            "capabilities",
+            "test_pattern",
+        }
     )
     for requirement in requirements:
-        parsed = _strict_object(requirement, requirement_keys, "requirement")
+        parsed = _strict_object_with_optional(
+            requirement,
+            requirement_keys,
+            frozenset({"module_id", "options"}),
+            "requirement",
+        )
         _opaque(parsed["requirement_id"], "requirement.requirement_id")
+        if "module_id" in parsed:
+            _opaque(parsed["module_id"], "requirement.module_id")
         if not isinstance(parsed["capabilities"], list) or not parsed["capabilities"]:
             raise ValueError("requirement.capabilities is invalid")
         for capability in parsed["capabilities"]:
@@ -225,6 +276,25 @@ def validate_offer(value: Any, expected_lab: str) -> dict[str, Any]:
         pattern = parsed["test_pattern"]
         if not isinstance(pattern, str) or ".." in pattern or len(pattern) > 200:
             raise ValueError("requirement.test_pattern is unsafe")
+        options = parsed.get("options", {})
+        if not isinstance(options, dict) or len(options) > 64:
+            raise ValueError("requirement.options is invalid")
+        for option_id, option_value in options.items():
+            _opaque(option_id, "requirement.option")
+            if _PRIVATE_OPTION_PART.search(option_id):
+                raise ValueError("requirement option key is private or unsafe")
+            if isinstance(option_value, bool):
+                continue
+            if isinstance(option_value, int) and -1_000_000_000 <= option_value <= 1_000_000_000:
+                continue
+            if (
+                isinstance(option_value, str)
+                and option_value
+                and option_value == option_value.strip()
+                and len(option_value) <= 256
+            ):
+                continue
+            raise ValueError("requirement option value is invalid")
     source = _strict_object(
         offer["source"], frozenset({"repository", "commit_sha", "ref_name", "pr_number"}), "source"
     )
@@ -415,12 +485,16 @@ class CentralAgent:
         self.database.update_central_execution(execution_id, state="declined")
 
     def _binding(self, offer: Mapping[str, Any]) -> Mapping[str, Any] | None:
-        requirements = offer["definition"]["suite"]["requirements"]
-        matches = []
+        suite = offer["definition"]["suite"]
+        requirements = suite["requirements"]
+        catalog_source = suite.get("testcode_catalog")
+        if catalog_source is not None and catalog_source["repository"] != self.settings.testcode_repository:
+            return None
+        items = []
         for requirement in requirements:
             binding = self.settings.bindings.get(requirement["requirement_id"])
             if not binding:
-                continue
+                return None
             if (
                 binding["platform_class"] != requirement["platform_class"]
                 or binding["device_model"] != requirement["device_model"]
@@ -428,9 +502,68 @@ class CentralAgent:
                 or offer["platform_class"] != binding["platform_class"]
                 or offer["device_model"] != binding["device_model"]
             ):
-                continue
-            matches.append(binding)
-        return matches[0] if len(matches) == 1 and len(requirements) == 1 else None
+                return None
+            items.append({"requirement": dict(requirement), "binding": dict(binding)})
+        if not items or len({item["binding"]["testcode_commit"] for item in items}) != 1:
+            return None
+        if catalog_source is not None and any(
+            item["binding"]["testcode_commit"] != catalog_source["commit_sha"]
+            for item in items
+        ):
+            return None
+        return {"version": 1, "items": items}
+
+    @staticmethod
+    def _plan_items(
+        execution: Mapping[str, Any],
+        frozen: Mapping[str, Any],
+    ) -> list[tuple[Mapping[str, Any], Mapping[str, Any]]]:
+        requirements = execution["offer"]["definition"]["suite"]["requirements"]
+        if frozen.get("version") == 1 and isinstance(frozen.get("items"), list):
+            raw_items = frozen["items"]
+            if len(raw_items) != len(requirements):
+                raise ConfigError("central private binding plan does not match the frozen suite")
+            items: list[tuple[Mapping[str, Any], Mapping[str, Any]]] = []
+            for expected, raw in zip(requirements, raw_items, strict=True):
+                if not isinstance(raw, dict):
+                    raise ConfigError("central private binding plan is invalid")
+                requirement = raw.get("requirement")
+                binding = raw.get("binding")
+                if (
+                    not isinstance(requirement, dict)
+                    or not isinstance(binding, dict)
+                    or requirement != expected
+                ):
+                    raise ConfigError("central private binding plan changed after it was frozen")
+                items.append((requirement, binding))
+            return items
+        if len(requirements) != 1:
+            raise ConfigError("legacy central binding cannot execute multiple requirements")
+        return [(requirements[0], frozen)]
+
+    @staticmethod
+    def _assignment_id(
+        execution_id: str,
+        requirement: Mapping[str, Any],
+        requirement_count: int,
+    ) -> str:
+        identity = (
+            execution_id
+            if requirement_count == 1
+            else f"{execution_id}:{requirement['requirement_id']}"
+        )
+        return _stable_id("assignment", identity)
+
+    @staticmethod
+    def _publishable_attempt(attempt: Mapping[str, Any]) -> bool:
+        pointer = attempt.get("pointer")
+        return (
+            attempt.get("state") in {"passed", "failed", "error", "skipped"}
+            and isinstance(pointer, dict)
+            and pointer.get("contract_version") == 2
+            and isinstance(pointer.get("publishers"), list)
+            and isinstance(pointer.get("run_id"), str)
+        )
 
     @staticmethod
     def _repository_from_remote(remote: str) -> str | None:
@@ -622,12 +755,31 @@ class CentralAgent:
         execution: Mapping[str, Any],
         binding: Mapping[str, Any],
         behavior: str,
+        requirement: Mapping[str, Any] | None = None,
+        assignment_id: str | None = None,
     ) -> tuple[dict[str, Any], str, str, str, str]:
         offer = execution["offer"]
         execution_id = str(execution["lab_execution_id"])
-        assignment_id = _stable_id("assignment", execution_id)
-        attempt_number = len(self.database.central_attempts(execution_id)) + 1
-        attempt_id = _stable_id("attempt", f"{execution_id}:{attempt_number}")
+        definition = offer["definition"]
+        requirements = definition["suite"]["requirements"]
+        if requirement is None:
+            requirement = requirements[0]
+        if assignment_id is None:
+            assignment_id = self._assignment_id(
+                execution_id,
+                requirement,
+                len(requirements),
+            )
+        assignment_attempt_number = (
+            len(self.database.central_attempts_for_assignment(assignment_id)) + 1
+        )
+        global_attempt_number = len(self.database.central_attempts(execution_id)) + 1
+        attempt_identity = (
+            f"{execution_id}:{global_attempt_number}"
+            if len(requirements) == 1
+            else f"{assignment_id}:{assignment_attempt_number}"
+        )
+        attempt_id = _stable_id("attempt", attempt_identity)
         local_run_id = _stable_id("local", execution_id)
         started_at = _now()
         attempt, created = self.database.start_central_attempt(
@@ -642,8 +794,6 @@ class CentralAgent:
         target = self._preflight(binding)
         root, profile, sha, ref = target.root, target.profile, target.sha, target.ref
         source = offer["source"]
-        definition = offer["definition"]
-        requirement = definition["suite"]["requirements"][0]
         metadata = {
             "contract_version": 2,
             "project_id": definition["project"]["id"],
@@ -664,7 +814,7 @@ class CentralAgent:
             "local_gate_run_id": local_run_id,
             "assignment_id": assignment_id,
             "attempt_id": attempt_id,
-            "attempt": attempt_number,
+            "attempt": assignment_attempt_number,
             "source": source,
             "testcode": {
                 "repository": self.settings.testcode_repository,
@@ -676,7 +826,7 @@ class CentralAgent:
             self.settings.state_dir
             / "central-artifacts"
             / execution_id
-            / f"attempt-{attempt_number}"
+            / f"attempt-{global_attempt_number}"
         )
         work.mkdir(parents=True, exist_ok=True)
         pointer_path = work / "result-pointer.json"
@@ -694,6 +844,16 @@ class CentralAgent:
                 "GITHUB_REF_NAME": str(source["ref_name"]),
             }
         )
+        module_id = requirement.get("module_id")
+        if module_id is not None:
+            environment["MINER_TEST_MODULE_OPTIONS"] = json.dumps(
+                {
+                    "schema_version": 1,
+                    "module_id": module_id,
+                    "values": requirement.get("options", {}),
+                },
+                separators=(",", ":"),
+            )
         if source["pr_number"] is None:
             environment.pop("MINER_TEST_PR_NUMBER", None)
         else:
@@ -757,8 +917,8 @@ class CentralAgent:
                 command.extend(["--device", str(device)])
         private_process = work / ".private"
         private_process.mkdir(mode=0o700, exist_ok=True)
-        stdout_path = private_process / f"attempt-{attempt_number}.stdout.raw.log"
-        stderr_path = private_process / f"attempt-{attempt_number}.stderr.raw.log"
+        stdout_path = private_process / f"attempt-{global_attempt_number}.stdout.raw.log"
+        stderr_path = private_process / f"attempt-{global_attempt_number}.stderr.raw.log"
         renewal_errors: list[str] = []
         renewal_interval = max(
             1.0,
@@ -914,16 +1074,49 @@ class CentralAgent:
     def _completion(
         self,
         execution: Mapping[str, Any],
-        pointer: Mapping[str, Any],
-        started_at: str,
-        completed_at: str,
         testcode_sha: str,
         testcode_ref: str,
     ) -> dict[str, Any]:
         offer = execution["offer"]
         definition = offer["definition"]
-        attempt = self.database.central_attempts(str(execution["lab_execution_id"]))[-1]
-        publisher = next(item for item in pointer["publishers"] if item["name"] == "mining_qa_status")
+        attempts = [
+            attempt
+            for attempt in self.database.central_attempts(
+                str(execution["lab_execution_id"])
+            )
+            if self._publishable_attempt(attempt)
+        ]
+        if not attempts:
+            raise ConfigError("central completion has no publishable module attempts")
+        children = []
+        for attempt in attempts:
+            saved_pointer = attempt["pointer"]
+            publisher = next(
+                item
+                for item in saved_pointer["publishers"]
+                if item["name"] == "mining_qa_status" and item.get("success") is True
+            )
+            children.append(
+                {
+                    "assignment_id": attempt["assignment_id"],
+                    "attempt_id": attempt["attempt_id"],
+                    "runner_run_id": saved_pointer["run_id"],
+                    "status": saved_pointer["status"],
+                    "result_id": publisher["result_id"],
+                    "result_url": publisher["url"],
+                }
+            )
+        statuses = {str(child["status"]) for child in children}
+        outcome = (
+            "error"
+            if "error" in statuses
+            else "failed"
+            if "failed" in statuses
+            else "passed"
+            if "passed" in statuses
+            else "skipped"
+        )
+        first_pointer = attempts[0]["pointer"]
         return {
             "contract_version": 2,
             "idempotency_key": f"complete-{_stable_id('id', str(execution['lab_execution_id']))}",
@@ -936,7 +1129,7 @@ class CentralAgent:
                 "central_gate_run_id": execution["central_gate_run_id"],
                 "lab_execution_id": execution["lab_execution_id"],
                 "lab_id": self.settings.lab_id,
-                "local_gate_run_id": pointer["correlation"]["local_gate_run_id"],
+                "local_gate_run_id": first_pointer["correlation"]["local_gate_run_id"],
                 "definition_digest": execution["definition_digest"],
             },
             "published_completion": {
@@ -954,25 +1147,16 @@ class CentralAgent:
                 "trigger_id": definition["trigger"]["id"],
                 "trigger_revision_id": definition["trigger"]["revision_id"],
                 "definition_digest": execution["definition_digest"],
-                "outcome": pointer["status"],
-                "started_at": started_at,
-                "completed_at": completed_at,
+                "outcome": outcome,
+                "started_at": min(str(attempt["started_at"]) for attempt in attempts),
+                "completed_at": max(str(attempt["completed_at"]) for attempt in attempts),
                 "source": offer["source"],
                 "testcode": {
                     "repository": self.settings.testcode_repository,
                     "ref": testcode_ref,
                     "commit_sha": testcode_sha,
                 },
-                "children": [
-                    {
-                        "assignment_id": attempt["assignment_id"],
-                        "attempt_id": attempt["attempt_id"],
-                        "runner_run_id": pointer["run_id"],
-                        "status": pointer["status"],
-                        "result_id": publisher["result_id"],
-                        "result_url": publisher["url"],
-                    }
-                ],
+                "children": children,
                 "reason_code": None,
             },
         }
@@ -1081,6 +1265,7 @@ class CentralAgent:
         behavior: str,
     ) -> str:
         execution_id = str(execution["lab_execution_id"])
+        items = self._plan_items(execution, binding)
         if phase == "reclaim" or (
             execution["state"] == "claimed" and self._claim_expired(execution)
         ):
@@ -1103,37 +1288,38 @@ class CentralAgent:
         current = self.database.central_execution(execution_id)
         if current is None:
             raise ConfigError("renewed central execution disappeared")
-        attempts = self.database.central_attempts(execution_id)
-        if attempts:
-            latest = attempts[-1]
-            saved_pointer = latest.get("pointer")
-            publishable = (
-                latest.get("state") in {"passed", "failed", "error", "skipped"}
-                and isinstance(saved_pointer, dict)
-                and saved_pointer.get("contract_version") == 2
-                and isinstance(saved_pointer.get("publishers"), list)
-                and isinstance(saved_pointer.get("run_id"), str)
+        testcode_sha = str(items[0][1].get("testcode_commit", "0" * 40))
+        testcode_ref = "detached"
+        for requirement, item_binding in items:
+            assignment_id = self._assignment_id(
+                execution_id,
+                requirement,
+                len(items),
             )
-            if publishable:
-                completion = self._completion(
-                    current,
-                    saved_pointer,
-                    str(latest["started_at"]),
-                    str(latest["completed_at"]),
-                    str(binding["testcode_commit"]),
-                    "detached",
-                )
-                self.database.enqueue_central_completion(
-                    execution_id=execution_id,
-                    idempotency_key=str(completion["idempotency_key"]),
-                    body=completion,
-                )
-                return self._flush(current)
-            if binding["execution"] == "hardware" or len(attempts) >= self.settings.max_attempts:
+            assignment_attempts = self.database.central_attempts_for_assignment(
+                assignment_id
+            )
+            publishable = next(
+                (
+                    attempt
+                    for attempt in reversed(assignment_attempts)
+                    if self._publishable_attempt(attempt)
+                ),
+                None,
+            )
+            if publishable is not None:
+                continue
+            trusted_target = self._preflight(item_binding)
+            testcode_sha = trusted_target.sha
+            testcode_ref = trusted_target.ref
+            if assignment_attempts and (
+                item_binding["execution"] == "hardware"
+                or len(assignment_attempts) >= self.settings.max_attempts
+            ):
                 completion = self._error_completion(
                     current,
-                    testcode_sha=str(binding["testcode_commit"]),
-                    testcode_ref="detached",
+                    testcode_sha=testcode_sha,
+                    testcode_ref=testcode_ref,
                 )
                 self.database.enqueue_central_completion(
                     execution_id=execution_id,
@@ -1141,45 +1327,52 @@ class CentralAgent:
                     body=completion,
                 )
                 return self._flush(current)
-        trusted_target = self._preflight(binding)
-        while True:
-            try:
-                pointer, started_at, completed_at, sha, ref = self._run_testcode(
-                    current, binding, behavior
-                )
-                break
-            except (ConfigError, OSError, subprocess.SubprocessError, ValueError) as exc:
-                hardware = binding["execution"] == "hardware"
-                self.database.fail_running_central_attempt(
-                    execution_id,
-                    str(exc),
-                    cleanup_disposition="uncertain" if hardware else "error",
-                )
-                attempt_count = len(self.database.central_attempts(execution_id))
-                if hardware or attempt_count >= self.settings.max_attempts:
-                    completion = self._error_completion(
-                        current,
-                        testcode_sha=trusted_target.sha,
-                        testcode_ref=trusted_target.ref,
+            while True:
+                try:
+                    if len(items) == 1:
+                        run = self._run_testcode(current, item_binding, behavior)
+                    else:
+                        run = self._run_testcode(
+                            current,
+                            item_binding,
+                            behavior,
+                            requirement,
+                            assignment_id,
+                        )
+                    _, _, _, testcode_sha, testcode_ref = run
+                    break
+                except (ConfigError, OSError, subprocess.SubprocessError, ValueError) as exc:
+                    hardware = item_binding["execution"] == "hardware"
+                    self.database.fail_running_central_attempt(
+                        execution_id,
+                        str(exc),
+                        cleanup_disposition="uncertain" if hardware else "error",
                     )
-                    self.database.enqueue_central_completion(
-                        execution_id=execution_id,
-                        idempotency_key=str(completion["idempotency_key"]),
-                        body=completion,
+                    assignment_attempts = (
+                        self.database.central_attempts_for_assignment(assignment_id)
                     )
-                    return self._flush(current)
-                delay = min(
-                    self.settings.retry_backoff_seconds * (2 ** (attempt_count - 1)),
-                    self.settings.max_retry_backoff_seconds,
-                )
-                time.sleep(delay)
+                    if hardware or len(assignment_attempts) >= self.settings.max_attempts:
+                        completion = self._error_completion(
+                            current,
+                            testcode_sha=testcode_sha,
+                            testcode_ref=testcode_ref,
+                        )
+                        self.database.enqueue_central_completion(
+                            execution_id=execution_id,
+                            idempotency_key=str(completion["idempotency_key"]),
+                            body=completion,
+                        )
+                        return self._flush(current)
+                    delay = min(
+                        self.settings.retry_backoff_seconds
+                        * (2 ** (len(assignment_attempts) - 1)),
+                        self.settings.max_retry_backoff_seconds,
+                    )
+                    time.sleep(delay)
         completion = self._completion(
             current,
-            pointer,
-            started_at,
-            completed_at,
-            sha,
-            ref,
+            testcode_sha,
+            testcode_ref,
         )
         self.database.enqueue_central_completion(
             execution_id=execution_id,
@@ -1221,19 +1414,21 @@ class CentralAgent:
                 )
                 results.append("declined")
                 continue
-            binding = execution.get("binding") or self._binding(validated)
-            if behavior == "decline-no-safe-binding" or binding is None:
+            binding_plan = execution.get("binding") or self._binding(validated)
+            if behavior == "decline-no-safe-binding" or binding_plan is None:
                 self._decline(validated, "no_safe_binding", execution=execution)
                 results.append("declined")
                 continue
             try:
-                binding = self.database.freeze_central_binding(
-                    str(execution["lab_execution_id"]), binding
+                binding_plan = self.database.freeze_central_binding(
+                    str(execution["lab_execution_id"]), binding_plan
                 )
+                items = self._plan_items(execution, binding_plan)
             except ValueError as exc:
                 raise ConfigError("central private binding snapshot is invalid") from exc
             try:
-                self._preflight(binding)
+                for _, item_binding in items:
+                    self._preflight(item_binding)
             except ConfigError:
                 attempts = self.database.central_attempts(
                     str(execution["lab_execution_id"])
@@ -1252,15 +1447,32 @@ class CentralAgent:
                     str(execution["lab_execution_id"]),
                     "agent restarted while the runner attempt was active",
                     cleanup_disposition=(
-                        "uncertain" if binding["execution"] == "hardware" else "error"
+                        "uncertain"
+                        if any(
+                            item_binding["execution"] == "hardware"
+                            for _, item_binding in items
+                        )
+                        else "error"
                     ),
                 )
                 attempts = self.database.central_attempts(str(execution["lab_execution_id"]))
-            assignment_id = _stable_id("assignment", str(execution["lab_execution_id"]))
+            execution_id = str(execution["lab_execution_id"])
+            lease_owner_id = (
+                self._assignment_id(execution_id, items[0][0], 1)
+                if len(items) == 1
+                else _stable_id("lease", execution_id)
+            )
+            resources = sorted(
+                {
+                    str(resource)
+                    for _, item_binding in items
+                    for resource in item_binding["resources"]
+                }
+            )
             if not self.database.acquire_central_resources(
-                str(execution["lab_execution_id"]),
-                assignment_id,
-                list(binding["resources"]),
+                execution_id,
+                lease_owner_id,
+                resources,
             ):
                 self._decline(
                     validated,
@@ -1273,7 +1485,7 @@ class CentralAgent:
                 results.append(
                     self._execute_with_lease(
                         execution,
-                        binding,
+                        binding_plan,
                         phase=phase,
                         behavior=behavior,
                     )

@@ -9,9 +9,10 @@
   contract.
 - [x] **ORCH-CENTRAL-AC-03:** A central execution is persisted uniquely before
   claim and replay/restart cannot create duplicate local work.
-- [x] **ORCH-CENTRAL-AC-04:** One portable requirement resolves to exactly one
+- [x] **ORCH-CENTRAL-AC-04:** Every portable requirement resolves to exactly one
   enabled private binding and re-runs local trust, compatibility, preflight,
-  and lease checks.
+  and lease checks; a missing or ambiguous binding declines the whole offer
+  before runner access.
 - [x] **ORCH-CENTRAL-AC-05:** Assignment retry creates a new immutable attempt;
   prior status, timing, pointer, child links, archive, and cleanup disposition
   are never overwritten.
@@ -50,6 +51,14 @@
   coordination and is passed to the trusted exact-SHA Testcode process as its
   `MINING_QA_TOKEN` result/artifact publisher token; unrelated credentials and
   the service-side token-variable name remain filtered.
+- [x] **ORCH-CENTRAL-AC-19:** One claimed execution runs the frozen requirements
+  in suite order, creates a stable assignment and immutable retry attempts per
+  requirement, resumes only unfinished requirements after restart, and submits
+  one completion containing one child for every selected module.
+- [x] **ORCH-CENTRAL-AC-20:** Catalog-backed requirements carry exact Testcode
+  repository/commit provenance, module ID, and only declared bounded portable
+  options. The Lab rejects provenance drift, forwards the selection in a
+  dedicated runner contract value, and Testcode revalidates before device use.
 
 ## Quality attributes
 
@@ -64,6 +73,19 @@
 
 ## Verification evidence
 
+- The complete Lab unit suite passed all 87 tests on 2026-08-27. Central-agent
+  tests prove exact catalog/binding repository and commit agreement, bounded
+  module/option forwarding, acceptance of automatic trigger provenance, and
+  rejection of private-looking options before runner launch.
+- `PYTHONPATH=src .venv/bin/python -m unittest discover -s tests/unit -v`
+  passed all 86 tests on 2026-08-27. Multi-module coverage proves immutable
+  binding plans, stable per-requirement assignment identity, per-assignment
+  retry bounds, restart resume without rerunning a completed module, ordered
+  execution, and aggregate completion with one child per module.
+- The wheel/sdist build and all five repository skill validators passed on
+  2026-08-27. Status-owned simulation run `20260827T135058.254730Z` passed all
+  nine scenarios with two modules per complete Lab execution; it is simulation,
+  not HIL.
 - `PYTHONPATH=src .venv/bin/python -m unittest discover -s tests/unit -v`
   passed all 84 tests on 2026-08-27 after the unified-token change. The focused
   central suite proves mode-0600 binding, token reuse for trusted Testcode

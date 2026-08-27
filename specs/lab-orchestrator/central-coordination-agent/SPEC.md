@@ -14,6 +14,12 @@ authority.
 
 ## Changelog
 
+- 2026-08-27: Added exact Testcode catalog provenance, catalog module IDs and
+  portable option selections to central offers, with local binding validation
+  and independent Testcode revalidation before device construction.
+- 2026-08-27: Added one claimed central execution for a full gate or selected
+  module subset, with an immutable requirement-to-binding plan and one child
+  result per executed module.
 - 2026-08-27: Unified central coordination and trusted-runner publication on
   one app-issued, Lab-bound token and removed bootstrap-only enrollment.
 - 2026-08-24: Completed the production-binding expansion: explicit mock versus

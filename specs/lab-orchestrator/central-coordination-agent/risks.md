@@ -5,9 +5,9 @@
 ### In
 
 - Explicit mode, Status client, sanitized capability/subscription, durable
-  offers/claims/outbox, private binding, immutable attempts, v2 runner
-  correlation, explicit mock/hardware execution, enrollment, completion,
-  restart, and operator controls.
+  offers/claims/outbox, ordered private binding plans, immutable
+  per-requirement attempts, v2 runner correlation, explicit mock/hardware
+  execution, enrollment, completion, restart, and operator controls.
 
 ### Out
 
@@ -31,6 +31,8 @@
 | Failure | Impact | Detection | Mitigation or recovery |
 |---|---|---|---|
 | Replayed offer duplicates assignment | Duplicate hardware mutation | unique central execution/reopen tests | Persist before claim and reuse one local identity |
+| Partial multi-module run restarts completed modules | Duplicate device mutation or result children | multi-module reopen and pointer tests | Stable per-requirement assignments; resume only modules with no publishable terminal pointer |
+| One requirement has no private binding | Partial or misleading gate coverage | complete-plan binding tests | Resolve and freeze the entire plan before claim-time execution |
 | Binding drift after claim | Wrong target/profile | frozen snapshot comparison | Resolve/freeze before resources and fail closed |
 | Claim expires during cleanup | Late/missing global evidence | lease timer and 409 event | finish cleanup, retain evidence, record conflict |
 | Retry overwrites prior attempt | Lost audit/evidence | migration/retry assertions | immutable `assignment_attempts` rows |
@@ -38,6 +40,7 @@
 | Mock behavior reaches a real device binding | Unauthorized reset or false evidence | binding-class command/environment tests | explicit binding type and mutually exclusive fields |
 | Hardware process/pointer failure is retried | Duplicate mutation before cleanup is known | launch/failure regression | no automatic hardware retry; require operator inspection |
 | Runner output exhausts local storage | Service/host failure during cleanup | bounded-stream regression and state monitoring | drain continuously, retain at most the configured cap, fail explicitly after cleanup |
+| Stale or forged catalog metadata selects different runner behavior | Wrong module or option policy | exact catalog provenance/binding and option tests | require the trusted Testcode repository/commit locally and let Testcode independently validate module/options |
 
 ## Security, privacy, and safety
 
