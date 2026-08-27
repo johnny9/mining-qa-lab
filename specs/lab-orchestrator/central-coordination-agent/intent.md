@@ -33,8 +33,8 @@ mode remains compatible and independently usable.
 
 ## Primary flow
 
-1. Validate central configuration, enroll once with an operator bootstrap
-   credential, heartbeat, replace subscriptions, and persist the pull cursor.
+1. Validate central configuration, bind one app-issued Lab token, heartbeat,
+   replace subscriptions, and persist the pull cursor.
 2. Validate and persist an offer, claim it, resolve exactly one private
    binding, acquire local resources, and create a v2 Testcode attempt.
 3. Persist cleanup and child pointer, submit one completion through the outbox,

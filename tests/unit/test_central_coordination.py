@@ -204,13 +204,16 @@ class CentralConfigurationTest(unittest.TestCase):
             with self.assertRaisesRegex(ConfigError, "cannot configure a mock endpoint"):
                 validate_config(document)
 
-    def test_central_credential_cannot_enter_runner_allowlist(self) -> None:
+    def test_central_credential_can_be_the_runner_publisher_token(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             document = self.central_document(root)
             document["controller"]["environment_allowlist"] = ["TEST_LAB_TOKEN"]
-            with self.assertRaisesRegex(ConfigError, "cannot expose central credentials"):
-                validate_config(document)
+            normalized = validate_config(document)
+            self.assertEqual(
+                normalized["coordination"]["central"]["token_env"],
+                "TEST_LAB_TOKEN",
+            )
 
 
 class CentralContractTest(unittest.TestCase):
@@ -569,7 +572,7 @@ class CentralContractTest(unittest.TestCase):
             settings = CentralSettings(
                 base_url="http://127.0.0.1:3000",
                 lab_id="lab-east",
-                token="private-agent-token",
+                token="central-agent-secret",
                 timeout=1,
                 subscriptions=("firmware-advisory",),
                 state_dir=state_dir,
@@ -580,7 +583,7 @@ class CentralContractTest(unittest.TestCase):
                 max_retry_backoff_seconds=2,
                 max_attempts=3,
                 environment_allowlist=("DEVICE_API_TOKEN",),
-                token_environment="MINING_QA_TOKEN",
+                token_environment="TEST_LAB_TOKEN",
             )
             agent = CentralAgent(settings, database)
             execution = database.central_execution("execution-1")
@@ -650,7 +653,8 @@ class CentralContractTest(unittest.TestCase):
                     os.environ,
                     {
                         "PATH": "/usr/bin",
-                        "MINING_QA_TOKEN": "central-agent-secret",
+                        "MINING_QA_TOKEN": "stale-publisher-secret",
+                        "TEST_LAB_TOKEN": "central-agent-secret",
                         "DEVICE_API_TOKEN": "device-api-secret",
                         "UNRELATED_SECRET": "must-not-pass",
                         "MINING_QA_MOCK_URL": "http://127.0.0.1:39001",
@@ -677,7 +681,10 @@ class CentralContractTest(unittest.TestCase):
             )
             runner_environment = invocations[0]["env"]
             self.assertEqual(runner_environment["DEVICE_API_TOKEN"], "device-api-secret")
-            self.assertNotIn("MINING_QA_TOKEN", runner_environment)
+            self.assertEqual(
+                runner_environment["MINING_QA_TOKEN"], "central-agent-secret"
+            )
+            self.assertNotIn("TEST_LAB_TOKEN", runner_environment)
             self.assertNotIn("UNRELATED_SECRET", runner_environment)
             self.assertNotIn("MINING_QA_MOCK_URL", runner_environment)
             self.assertNotIn("MINING_QA_INTEGRATION_DEVELOPMENT", runner_environment)
@@ -892,13 +899,14 @@ class CentralContractTest(unittest.TestCase):
                 "contract_version": 2,
                 "lab_id": "lab-east",
                 "registration_id": "registration-lab-east-1",
-                "agent_token": "mqa_lab_" + "a" * 43,
+                "credential_state": "bound",
                 "issued_at": datetime.now(UTC).isoformat(),
             }
+            lab_token = "mqa_" + "a" * 43
             with (
                 patch.dict(
                     os.environ,
-                    {"MINING_QA_LAB_BOOTSTRAP_SECRET": "bootstrap-secret"},
+                    {"TEST_LAB_TOKEN": lab_token},
                     clear=True,
                 ),
                 patch(
@@ -915,10 +923,9 @@ class CentralContractTest(unittest.TestCase):
             self.assertEqual(destination.stat().st_mode & 0o777, 0o600)
             self.assertEqual(
                 destination.read_text(encoding="utf-8"),
-                f"TEST_LAB_TOKEN={response['agent_token']}\n",
+                f"TEST_LAB_TOKEN={lab_token}\n",
             )
-            self.assertNotIn("agent_token", result)
-            self.assertNotIn(response["agent_token"], json.dumps(result))
+            self.assertNotIn(lab_token, json.dumps(result))
             self.assertEqual(request.call_args.args[1], "/api/v2/labs/register")
             with self.assertRaisesRegex(ConfigError, "absolute non-root"):
                 register_central_lab(

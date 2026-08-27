@@ -28,10 +28,12 @@ APIs and remains disabled until both sides have compatible readers.
   response body, list, cursor page, or error detail is unbounded.
 - Unknown object fields are rejected. Adding a field requires a coordinated
   reader-first update to both copies of this contract.
-- Agent routes require a scoped bearer credential. Bootstrap registration
-  additionally requires a one-use operator-issued bootstrap credential.
-- Secrets, bearer values, bootstrap values, and claim tokens are never logged,
-  published, or returned by public Status APIs.
+- Agent routes require one app-issued Lab bearer credential with coordination,
+  result-publication, and artifact-upload scopes. Registration atomically binds
+  that credential to one Lab ID; later coordination verifies both the token
+  record and the Lab binding.
+- Secrets, bearer values, and claim tokens are never logged, published, or
+  returned by public Status APIs.
 
 Every mutating request carries an `idempotency_key`, an opaque ID unique within
 its route and lab. Repeating the same key with the same canonical body returns
@@ -129,15 +131,18 @@ Response `201` for first registration or `200` for an idempotent replay:
   "contract_version": 2,
   "lab_id": "lab-east",
   "registration_id": "registration-0001",
-  "agent_token": "one-time-secret-value",
+  "credential_state": "bound",
   "issued_at": "2026-08-14T12:00:00Z"
 }
 ```
 
-`public_lab_label` and `agent_version` are 1–80 printable characters. The token
-is returned only on creation or explicit rotation, is stored hashed by Status,
-and is never returned by later reads. Registration cannot change a lab ID or
-silently reactivate a disabled lab.
+`public_lab_label` and `agent_version` are 1–80 printable characters. The
+request bearer is created in the authenticated Status Admin interface, shown
+once, stored hashed, and must include `labs:coordinate`, `results:write`, and
+`artifacts:write`. One token cannot register a different Lab ID. A replacement
+token can rotate the binding only for the same immutable registration after the
+previous token has expired or been revoked. Registration cannot change a lab ID
+or silently reactivate a disabled lab.
 
 ## Heartbeat
 
@@ -514,7 +519,7 @@ and are never derived from a device or private binding.
 
 1. Deploy Status schema and readers with v2 routes disabled.
 2. Deploy Lab DTO readers and durable state with central mode disabled.
-3. Enable simulated registrations and offers only.
+3. Enable simulated app-issued Lab-token registration and offers only.
 4. Enable claim/renew/complete for deterministic local integration.
 5. Enable a real lab only after separate authorization and accepted simulation
    evidence.

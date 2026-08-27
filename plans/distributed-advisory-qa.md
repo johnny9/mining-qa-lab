@@ -99,7 +99,7 @@ coordination:
   central:
     base_url: https://public.example
     lab_id: lab-east
-    token_env: MINING_QA_LAB_AGENT_TOKEN
+    token_env: MINING_QA_TOKEN
     heartbeat_seconds: 30
     poll_seconds: 10
     claim_ttl_seconds: 120

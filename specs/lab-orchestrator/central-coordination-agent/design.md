@@ -20,9 +20,9 @@
   central configuration without network mutation.
 - Pausing new central claims is an authenticated operator action and does not
   stop active cleanup.
-- `central-register --public-label LABEL --agent-environment-file PATH` performs
-  one bootstrap-authenticated enrollment and creates a new private environment
-  file containing the returned Lab agent token. It never prints the token and
+- `central-register --public-label LABEL --agent-environment-file PATH` binds
+  the app-issued token named by central `token_env` and creates a new private
+  environment file containing that same token. It never prints the token and
   refuses to overwrite an existing file.
 
 ### Configuration
@@ -35,7 +35,7 @@ coordination:
   central:
     base_url: https://status.example
     lab_id: lab-east
-    token_env: MINING_QA_LAB_AGENT_TOKEN
+    token_env: MINING_QA_TOKEN
     heartbeat_seconds: 30
     poll_seconds: 10
     request_timeout_seconds: 10
@@ -75,9 +75,10 @@ environment variables.
   never enter YAML, subprocess arguments, general logs, metadata, completion,
   or public records. Private SQLite state may retain only the minimum protected
   capability required for restart-safe renewal/completion.
-- Runner processes receive the controller environment allowlist plus explicit
-  orchestration/publisher variables. Lab agent/bootstrap credentials are not
-  runner-eligible defaults.
+- The app-issued Lab token combines central coordination, result publication,
+  and artifact upload. The Lab maps it to `MINING_QA_TOKEN` for its trusted
+  exact-SHA runner without exposing the service-side environment-variable name;
+  unrelated service credentials remain filtered.
 
 ### Python API
 
@@ -175,10 +176,10 @@ conflict`, retaining the idempotency key and bounded response code.
 
 ## Compatibility and migration
 
-Ship the explicit binding reader before any real configuration. Existing
-proof-of-concept bindings are updated to declare `execution: mock`; ambiguity
-fails validation. Local mode remains unchanged. Rollback pauses/disables the
-central loop while preserving additive state and historical evidence.
+Ship the app-issued-token registration reader before using the new Admin token.
+Existing proof-of-concept bindings declare `execution: mock`; ambiguity fails
+validation. Local mode remains unchanged. Rollback pauses/disables the central
+loop while preserving additive state and historical evidence.
 
 ## Resource and operational constraints
 

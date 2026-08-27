@@ -393,7 +393,7 @@ class OrchestratorApiTest(unittest.IsolatedAsyncioTestCase):
                 "central": {
                     "base_url": "http://127.0.0.1:3000",
                     "lab_id": "lab-east",
-                    "token_env": "MINING_QA_LAB_AGENT_TOKEN",
+                    "token_env": "MINING_QA_TOKEN",
                     "subscriptions": {"gates": ["firmware-advisory"]},
                 },
             },
@@ -431,7 +431,7 @@ class OrchestratorApiTest(unittest.IsolatedAsyncioTestCase):
                 "os.environ",
                 {
                     "MINER_ORCHESTRATOR_API_TOKEN": "central-local-token",
-                    "MINING_QA_LAB_AGENT_TOKEN": "mqa_lab_" + "a" * 43,
+                    "MINING_QA_TOKEN": "mqa_" + "a" * 43,
                 },
             ),
             mock.patch(

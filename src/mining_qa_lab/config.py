@@ -235,24 +235,12 @@ def validate_config(document: Mapping[str, Any]) -> dict[str, Any]:
         central["base_url"] = base_url.rstrip("/")
         _identifier(central.get("lab_id"), "coordination.central.lab_id")
         token_environment = _string(
-            central.get("token_env", "MINING_QA_LAB_AGENT_TOKEN"),
+            central.get("token_env", "MINING_QA_TOKEN"),
             "coordination.central.token_env",
         )
         if not _ENVIRONMENT_NAME.fullmatch(token_environment):
             raise ConfigError("coordination.central.token_env must be an environment variable name")
         central["token_env"] = token_environment
-        forbidden_runner_environment = {
-            token_environment,
-            "MINING_QA_LAB_BOOTSTRAP_SECRET",
-        }
-        exposed = sorted(
-            forbidden_runner_environment.intersection(controller["environment_allowlist"])
-        )
-        if exposed:
-            raise ConfigError(
-                "controller.environment_allowlist cannot expose central credentials: "
-                + ", ".join(exposed)
-            )
         for key, default, maximum in (
             ("heartbeat_seconds", 30, 900),
             ("poll_seconds", 10, 300),

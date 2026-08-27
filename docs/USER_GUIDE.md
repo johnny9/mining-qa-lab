@@ -119,7 +119,7 @@ coordination:
   central:
     base_url: https://status.example
     lab_id: lab-east
-    token_env: MINING_QA_LAB_AGENT_TOKEN
+    token_env: MINING_QA_TOKEN
     subscriptions:
       gates: [firmware-advisory]
 
@@ -145,8 +145,8 @@ bindings:
 The hardware runner checkout must have the configured GitHub origin, exact
 commit, and no tracked modifications. Its executable must come from a worker
 environment separate from the Lab service. Only named runner environment
-variables are inherited; never reuse the Lab agent-token variable as a
-publisher or device credential.
+variables are inherited. The app-issued Lab token is intentionally reused for
+Status result and artifact publication; device credentials remain separate.
 
 Use `execution: mock` only for the local integration harness. A mock binding
 uses `mock_base_url_env` instead of `runner_executable` and `runner_devices`,
@@ -154,17 +154,17 @@ and the endpoint must resolve to loopback.
 
 ### Enroll the Lab
 
-An operator first creates the Lab registration with a bootstrap credential.
-The enrollment command creates a new mode-0600 environment file and does not
-print the returned agent token:
+The super admin first creates a **Lab coordination + publishing** token in the
+Status Admin interface. The enrollment command binds that token to one Lab ID,
+creates a new mode-0600 environment file, and never prints it:
 
 ```bash
-export MINING_QA_LAB_BOOTSTRAP_SECRET='operator-supplied-bootstrap-value'
+export MINING_QA_TOKEN='app-issued-lab-token'
 miner-orchestrator --config /home/lab/.config/mining-qa-lab/orchestrator.yaml \
   central-register \
   --public-label 'East Lab' \
   --agent-environment-file /home/lab/.config/mining-qa-lab/orchestrator.env
-unset MINING_QA_LAB_BOOTSTRAP_SECRET
+unset MINING_QA_TOKEN
 ```
 
 The destination parent must already exist, and enrollment refuses to replace

@@ -41,10 +41,13 @@
 
 ## Security, privacy, and safety
 
-Outbound-only coordination does not broaden hardware authority. Treat bootstrap,
-agent, and claim tokens as credentials, keep private mappings local, and
-preserve existing lease, runner, and cleanup boundaries. Hardware bindings must
-name the runner devices explicitly and may not inherit arbitrary service state.
+Outbound-only coordination does not broaden hardware authority. The app-issued
+Lab token intentionally carries coordination, publishing, and artifact scopes
+and is shared only with the trusted exact-SHA runner; compromise can therefore
+affect both scheduling evidence and child publication until the token is
+revoked. Keep private mappings local and preserve existing lease, runner,
+redaction, and cleanup boundaries. Hardware bindings must name runner devices
+explicitly and may not inherit arbitrary service state.
 
 ## Performance and resource risks
 

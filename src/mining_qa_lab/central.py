@@ -54,8 +54,7 @@ _OPAQUE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-_ENVIRONMENT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
-_AGENT_TOKEN = re.compile(r"^mqa_lab_[A-Za-z0-9_-]{16,120}$")
+_AGENT_TOKEN = re.compile(r"^mqa_[A-Za-z0-9_-]{16,120}$")
 _OFFER_KEYS = frozenset(
     {
         "central_gate_run_id",
@@ -268,7 +267,7 @@ class CentralSettings:
     max_attempts: int
     testcode_repository: str = "johnny9/mining-qa-testcode"
     environment_allowlist: tuple[str, ...] = ()
-    token_environment: str = "MINING_QA_LAB_AGENT_TOKEN"
+    token_environment: str = "MINING_QA_TOKEN"
 
     @classmethod
     def from_store(cls, store: ConfigStore) -> "CentralSettings":
@@ -277,7 +276,7 @@ class CentralSettings:
         if coordination["mode"] != "central":
             raise ConfigError("central-once requires coordination.mode: central")
         central = coordination["central"]
-        token_env = str(central.get("token_env", "MINING_QA_LAB_AGENT_TOKEN"))
+        token_env = str(central.get("token_env", "MINING_QA_TOKEN"))
         token = os.environ.get(token_env, "").strip()
         if not token:
             raise ConfigError(f"central Lab token environment is not set: {token_env}")
@@ -507,8 +506,13 @@ class CentralAgent:
         allowed = set(_DEFAULT_RUNNER_ENVIRONMENT)
         allowed.update(self.settings.environment_allowlist)
         allowed.difference_update(_CONTRACT_ENVIRONMENT)
+        allowed.discard("MINING_QA_TOKEN")
         allowed.discard(self.settings.token_environment)
-        return {key: value for key, value in os.environ.items() if key in allowed}
+        environment = {
+            key: value for key, value in os.environ.items() if key in allowed
+        }
+        environment["MINING_QA_TOKEN"] = self.settings.token
+        return environment
 
     @staticmethod
     def _claim_expired(execution: Mapping[str, Any]) -> bool:
@@ -1309,7 +1313,6 @@ def register_central_lab(
     *,
     public_label: str,
     agent_environment_file: Path,
-    bootstrap_token_env: str = "MINING_QA_LAB_BOOTSTRAP_SECRET",
 ) -> dict[str, str]:
     document = store.snapshot.document
     if document["coordination"]["mode"] != "central":
@@ -1317,8 +1320,6 @@ def register_central_lab(
     label = public_label.strip()
     if not label or len(label) > 80 or any(ord(character) < 32 for character in label):
         raise ConfigError("central public label must be 1-80 printable characters")
-    if not _ENVIRONMENT_NAME.fullmatch(bootstrap_token_env):
-        raise ConfigError("central bootstrap token environment name is invalid")
     if not agent_environment_file.is_absolute() or agent_environment_file == Path("/"):
         raise ConfigError("central agent environment file must be an absolute non-root path")
     if agent_environment_file.is_symlink():
@@ -1328,12 +1329,13 @@ def register_central_lab(
         raise ConfigError("central agent environment file parent does not exist")
     if destination.exists() or destination.is_symlink():
         raise ConfigError("central agent environment file already exists")
-    bootstrap_token = os.environ.get(bootstrap_token_env, "").strip()
-    if not bootstrap_token:
-        raise ConfigError(
-            f"central bootstrap token environment is not set: {bootstrap_token_env}"
-        )
     central = document["coordination"]["central"]
+    token_environment = str(central["token_env"])
+    lab_token = os.environ.get(token_environment, "").strip()
+    if not lab_token or not _AGENT_TOKEN.fullmatch(lab_token):
+        raise ConfigError(
+            f"app-issued Lab token environment is not set or invalid: {token_environment}"
+        )
     lab_id = str(central["lab_id"])
     body = {
         "contract_version": 2,
@@ -1348,17 +1350,15 @@ def register_central_lab(
     }
     response = CoordinationClient(
         str(central["base_url"]),
-        bootstrap_token,
+        lab_token,
         float(central["request_timeout_seconds"]),
     ).request("POST", "/api/v2/labs/register", body)
-    agent_token = response.get("agent_token")
     if (
         response.get("contract_version") != 2
         or response.get("lab_id") != lab_id
-        or not isinstance(agent_token, str)
-        or not _AGENT_TOKEN.fullmatch(agent_token)
+        or response.get("credential_state") != "bound"
     ):
-        raise ConfigError("central registration returned an invalid agent credential")
+        raise ConfigError("central registration did not bind the app-issued Lab token")
     try:
         registration_id = _opaque(
             response.get("registration_id"), "registration.registration_id"
@@ -1366,7 +1366,6 @@ def register_central_lab(
         issued_at = _timestamp(response.get("issued_at"), "registration.issued_at")
     except ValueError as exc:
         raise ConfigError("central registration returned invalid public metadata") from exc
-    token_environment = str(central["token_env"])
     descriptor = os.open(
         destination,
         os.O_WRONLY | os.O_CREAT | os.O_EXCL,
@@ -1374,7 +1373,7 @@ def register_central_lab(
     )
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            stream.write(f"{token_environment}={agent_token}\n")
+            stream.write(f"{token_environment}={lab_token}\n")
             stream.flush()
             os.fsync(stream.fileno())
     except Exception:

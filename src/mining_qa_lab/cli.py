@@ -52,14 +52,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     register = commands.add_parser(
         "central-register",
-        help="enroll this Lab and create a private agent-token environment file",
+        help="bind an app-issued Lab token and create a private environment file",
     )
     register.add_argument("--public-label", required=True)
     register.add_argument("--agent-environment-file", required=True, type=Path)
-    register.add_argument(
-        "--bootstrap-token-env",
-        default="MINING_QA_LAB_BOOTSTRAP_SECRET",
-    )
     central.add_argument(
         "--replay-from-zero",
         action="store_true",
@@ -103,7 +99,6 @@ def main(argv: list[str] | None = None) -> int:
                 store,
                 public_label=args.public_label,
                 agent_environment_file=args.agent_environment_file,
-                bootstrap_token_env=args.bootstrap_token_env,
             )
             print(json.dumps(result, indent=2, sort_keys=True))
             return 0

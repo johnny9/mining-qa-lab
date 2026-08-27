@@ -43,9 +43,13 @@
 - [x] **ORCH-CENTRAL-AC-16:** `serve` runs one persistent central loop with
   heartbeat cadence, pause/backoff state, graceful shutdown, and health status;
   the local operator surface directs central manual runs to Status.
-- [x] **ORCH-CENTRAL-AC-17:** An enrollment command reads the bootstrap secret
-  from a named environment variable and creates a mode-0600 agent environment
-  file without printing or storing either credential in YAML or general logs.
+- [x] **ORCH-CENTRAL-AC-17:** An enrollment command reads one app-issued Lab
+  token from the configured environment, binds it centrally, and creates a
+  mode-0600 environment file without printing or storing it in YAML or logs.
+- [x] **ORCH-CENTRAL-AC-18:** The same scoped Lab token authenticates central
+  coordination and is passed to the trusted exact-SHA Testcode process as its
+  `MINING_QA_TOKEN` result/artifact publisher token; unrelated credentials and
+  the service-side token-variable name remain filtered.
 
 ## Quality attributes
 
@@ -61,6 +65,15 @@
 ## Verification evidence
 
 - `PYTHONPATH=src .venv/bin/python -m unittest discover -s tests/unit -v`
+  passed all 84 tests on 2026-08-27 after the unified-token change. The focused
+  central suite proves mode-0600 binding, token reuse for trusted Testcode
+  publication, unrelated-secret filtering, replay, renewal, and recovery.
+- The package wheel/sdist build, specification integrity, and all repository
+  skill validators passed on 2026-08-27.
+- Status-owned development simulation run `20260827T030847.651096Z` passed all
+  nine scenarios with one app-issued token per Lab for registration,
+  coordination, child publication, and artifacts; it is simulation, not HIL.
+- `PYTHONPATH=src .venv/bin/python -m unittest discover -s tests/unit -v`
   completed all 84 Lab tests on 2026-08-24 with no skips, including the real
   optional web/service boundary.
 - `tests.unit.test_central_coordination` covers strict mode/binding validation,
@@ -71,7 +84,8 @@
   completion, malformed input, privacy, and cleanup error in run
   `20260824T095559.777660Z`. Rootless isolation, one-use enrollment,
   idempotent registration replay, and scoped teardown passed; the
-  evidence is explicitly simulation and not HIL.
+  evidence is explicitly simulation and not HIL. The current credential model
+  uses one app-issued token per simulated Lab for coordination and publication.
 - Focused central tests cover exact binding snapshots, repository/SHA and
   loopback preflight, exclusive resource conflicts, immutable retry attempts,
   maximum attempt enforcement, active-run renewal without cleanup interruption,
