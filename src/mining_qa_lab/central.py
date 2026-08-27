@@ -24,10 +24,38 @@ from .errors import ConfigError
 
 MAX_BODY_BYTES = 256 * 1024
 MAX_RUNNER_OUTPUT_BYTES = 1024 * 1024
+AGENT_VERSION = "mining-qa-lab/0.1.0"
+_DEFAULT_RUNNER_ENVIRONMENT = frozenset(
+    {
+        "PATH",
+        "LANG",
+        "LC_ALL",
+        "TZ",
+        "TMPDIR",
+        "MINING_QA_TOKEN",
+        "MINER_TEST_POOL_USER",
+        "MINER_TEST_POOL_PASSWORD",
+        "MINER_TEST_FAKE_STRATUM_PASSWORD",
+        "MINER_CURRENT_POOL_PASSWORD",
+    }
+)
+_CONTRACT_ENVIRONMENT = frozenset(
+    {
+        "MINER_TEST_ORCHESTRATION_METADATA",
+        "MINER_TEST_EXTERNAL_RUN_ID",
+        "MINER_TEST_RESULT_POINTER",
+        "GITHUB_REPOSITORY",
+        "GITHUB_SHA",
+        "GITHUB_REF_NAME",
+        "MINER_TEST_PR_NUMBER",
+    }
+)
 _OPAQUE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+_ENVIRONMENT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
+_AGENT_TOKEN = re.compile(r"^mqa_lab_[A-Za-z0-9_-]{16,120}$")
 _OFFER_KEYS = frozenset(
     {
         "central_gate_run_id",
@@ -238,6 +266,9 @@ class CentralSettings:
     retry_backoff_seconds: float
     max_retry_backoff_seconds: float
     max_attempts: int
+    testcode_repository: str = "johnny9/mining-qa-testcode"
+    environment_allowlist: tuple[str, ...] = ()
+    token_environment: str = "MINING_QA_LAB_AGENT_TOKEN"
 
     @classmethod
     def from_store(cls, store: ConfigStore) -> "CentralSettings":
@@ -266,7 +297,19 @@ class CentralSettings:
             retry_backoff_seconds=float(central["retry_backoff_seconds"]),
             max_retry_backoff_seconds=float(central["max_retry_backoff_seconds"]),
             max_attempts=int(central["max_attempts"]),
+            testcode_repository=str(document["testcode"]["repository"]),
+            environment_allowlist=tuple(document["controller"]["environment_allowlist"]),
+            token_environment=str(central["token_env"]),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class RunnerPreflight:
+    root: Path
+    profile: Path
+    executable: Path | None
+    sha: str
+    ref: str
 
 
 class CentralAgent:
@@ -296,7 +339,7 @@ class CentralAgent:
             {
                 "contract_version": 2,
                 "idempotency_key": f"heartbeat-{nonce}",
-                "agent_version": "mining-qa-lab/0.1.0",
+                "agent_version": AGENT_VERSION,
                 "sent_at": _now(),
                 "available_slots": max(0, len(self.settings.bindings) - self.database.central_agent_status()["active_leases"]),
                 "capabilities": distinct_capabilities,
@@ -339,12 +382,25 @@ class CentralAgent:
         )
         return raw_offers
 
-    def _decline(self, offer: Mapping[str, Any], reason: str) -> None:
+    def _decline(
+        self,
+        offer: Mapping[str, Any],
+        reason: str,
+        *,
+        execution: Mapping[str, Any] | None = None,
+    ) -> None:
         execution_id = _opaque(offer.get("lab_execution_id"), "offer.lab_execution_id")
         observed = str(offer.get("definition_digest", ""))
         if not _DIGEST.fullmatch(observed):
             observed = "0" * 64
             reason = "invalid_offer"
+        claim = None
+        if execution is not None and execution.get("state") == "claimed":
+            claim = {
+                "claim_id": execution["claim_id"],
+                "claim_generation": execution["claim_generation"],
+                "claim_token": execution["claim_token"],
+            }
         self.client.request(
             "POST",
             f"/api/v2/executions/{quote(execution_id)}/decline",
@@ -353,7 +409,7 @@ class CentralAgent:
                 "idempotency_key": f"decline-{_stable_id('id', execution_id)}",
                 "lab_id": self.settings.lab_id,
                 "observed_definition_digest": observed,
-                "claim": None,
+                "claim": claim,
                 "reason_code": reason,
             },
         )
@@ -377,21 +433,95 @@ class CentralAgent:
             matches.append(binding)
         return matches[0] if len(matches) == 1 and len(requirements) == 1 else None
 
-    def _preflight(self, binding: Mapping[str, Any]) -> tuple[Path, Path, str, str]:
+    @staticmethod
+    def _repository_from_remote(remote: str) -> str | None:
+        value = remote.strip()
+        scp = re.fullmatch(
+            r"(?:[^@]+@)?github\.com:(?P<path>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?)",
+            value,
+        )
+        if scp:
+            path = scp.group("path")
+        else:
+            parsed = urlsplit(value)
+            if (
+                parsed.hostname != "github.com"
+                or parsed.password
+                or parsed.username not in {None, "git"}
+            ):
+                return None
+            path = parsed.path.lstrip("/")
+        if path.endswith(".git"):
+            path = path[:-4]
+        return path if _REPOSITORY.fullmatch(path) else None
+
+    def _preflight(self, binding: Mapping[str, Any]) -> RunnerPreflight:
         root = Path(str(binding["testcode_root"])).resolve()
         profile = Path(str(binding["profile"])).resolve()
         if not root.is_dir() or not (root / ".git").exists():
             raise ConfigError("bound testcode checkout is unavailable")
         if not profile.is_file():
             raise ConfigError("bound runner profile is unavailable")
-        sha, ref = self._testcode_identity(root)
+        try:
+            sha, ref = self._testcode_identity(root)
+            remote = subprocess.run(
+                ["git", "config", "--get", "remote.origin.url"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise ConfigError("bound testcode checkout provenance is unavailable") from exc
         if sha != binding["testcode_commit"]:
             raise ConfigError("bound testcode checkout does not match its trusted commit")
-        mock_env = str(binding.get("mock_base_url_env", "MINING_QA_MOCK_URL"))
-        mock_url = os.environ.get(mock_env, "").strip()
-        if urlsplit(mock_url).hostname not in {"127.0.0.1", "::1", "localhost"}:
-            raise ConfigError("central simulation binding requires a loopback mock device")
-        return root, profile, sha, ref
+        if self._repository_from_remote(remote) != self.settings.testcode_repository:
+            raise ConfigError("bound testcode checkout origin does not match trusted repository")
+        execution = str(binding["execution"])
+        if execution == "mock":
+            mock_env = str(binding["mock_base_url_env"])
+            mock_url = os.environ.get(mock_env, "").strip()
+            if urlsplit(mock_url).hostname not in {"127.0.0.1", "::1", "localhost"}:
+                raise ConfigError("central simulation binding requires a loopback mock device")
+            return RunnerPreflight(root, profile, None, sha, ref)
+        try:
+            dirty = subprocess.run(
+                ["git", "status", "--porcelain", "--untracked-files=no"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise ConfigError("bound testcode checkout status is unavailable") from exc
+        if dirty:
+            raise ConfigError("bound hardware testcode checkout has tracked modifications")
+        executable = Path(str(binding["runner_executable"])).resolve()
+        if not executable.is_file() or not os.access(executable, os.X_OK):
+            raise ConfigError("bound hardware runner executable is unavailable")
+        if executable == Path(sys.executable).resolve():
+            raise ConfigError("hardware runner must not reuse the orchestrator interpreter")
+        return RunnerPreflight(root, profile, executable, sha, ref)
+
+    def _runner_environment(self) -> dict[str, str]:
+        allowed = set(_DEFAULT_RUNNER_ENVIRONMENT)
+        allowed.update(self.settings.environment_allowlist)
+        allowed.difference_update(_CONTRACT_ENVIRONMENT)
+        allowed.discard(self.settings.token_environment)
+        return {key: value for key, value in os.environ.items() if key in allowed}
+
+    @staticmethod
+    def _claim_expired(execution: Mapping[str, Any]) -> bool:
+        raw = execution.get("claim_expires_at")
+        if not isinstance(raw, str) or not raw:
+            return True
+        try:
+            expires_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return True
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        return expires_at <= datetime.now(UTC)
 
     def _claim(self, execution: Mapping[str, Any], *, next_generation: bool = False) -> dict[str, Any]:
         generation = int(execution.get("claim_generation") or 0)
@@ -430,12 +560,18 @@ class CentralAgent:
         return response
 
     def _renew(self, execution: Mapping[str, Any]) -> None:
+        renewal_cursor = hashlib.sha256(
+            str(execution.get("claim_expires_at") or "unobserved").encode()
+        ).hexdigest()[:16]
         response = self.client.request(
             "POST",
             f"/api/v2/executions/{quote(str(execution['lab_execution_id']))}/renew",
             {
                 "contract_version": 2,
-                "idempotency_key": f"renew-{_stable_id('id', str(execution['lab_execution_id']))}-{execution['claim_generation']}",
+                "idempotency_key": (
+                    f"renew-{_stable_id('id', str(execution['lab_execution_id']))}-"
+                    f"{execution['claim_generation']}-{renewal_cursor}"
+                ),
                 "claim_id": execution["claim_id"],
                 "claim_generation": execution["claim_generation"],
                 "claim_token": execution["claim_token"],
@@ -456,12 +592,33 @@ class CentralAgent:
             raise ConfigError("testcode checkout did not resolve to an exact commit")
         return sha, ref
 
+    @staticmethod
+    def _drain_runner_stream(
+        stream: Any,
+        path: Path,
+        state: dict[str, Any],
+        lock: threading.Lock,
+    ) -> None:
+        with path.open("wb") as output:
+            while True:
+                chunk = stream.read(64 * 1024)
+                if not chunk:
+                    break
+                with lock:
+                    remaining = MAX_RUNNER_OUTPUT_BYTES - int(state["size"])
+                    if remaining > 0:
+                        captured = chunk[:remaining]
+                        output.write(captured)
+                        state["size"] += len(captured)
+                    if len(chunk) > max(remaining, 0):
+                        state["overflow"] = True
+
     def _run_testcode(
         self,
         execution: Mapping[str, Any],
         binding: Mapping[str, Any],
         behavior: str,
-    ) -> tuple[dict[str, Any], str, str, str]:
+    ) -> tuple[dict[str, Any], str, str, str, str]:
         offer = execution["offer"]
         execution_id = str(execution["lab_execution_id"])
         assignment_id = _stable_id("assignment", execution_id)
@@ -478,9 +635,11 @@ class CentralAgent:
         )
         if not created:
             raise ConfigError(f"central execution {execution_id} already has a runner attempt")
-        root, profile, sha, ref = self._preflight(binding)
+        target = self._preflight(binding)
+        root, profile, sha, ref = target.root, target.profile, target.sha, target.ref
         source = offer["source"]
         definition = offer["definition"]
+        requirement = definition["suite"]["requirements"][0]
         metadata = {
             "contract_version": 2,
             "project_id": definition["project"]["id"],
@@ -504,45 +663,23 @@ class CentralAgent:
             "attempt": attempt_number,
             "source": source,
             "testcode": {
-                "repository": "johnny9/mining-qa-testcode",
+                "repository": self.settings.testcode_repository,
                 "ref": ref,
                 "commit_sha": sha,
             },
         }
-        work = self.settings.state_dir / "central-artifacts" / execution_id
+        work = (
+            self.settings.state_dir
+            / "central-artifacts"
+            / execution_id
+            / f"attempt-{attempt_number}"
+        )
         work.mkdir(parents=True, exist_ok=True)
         pointer_path = work / "result-pointer.json"
         artifacts_path = work / "runner"
-        mock_env = str(binding.get("mock_base_url_env", "MINING_QA_MOCK_URL"))
-        mock_url = os.environ.get(mock_env, "").strip()
-        if urlsplit(mock_url).hostname not in {"127.0.0.1", "::1", "localhost"}:
-            raise ConfigError("central integration binding requires a loopback mock device")
-        mock_scenario = {
-            "pass": "pass",
-            "test-failure": "test-failure",
-            "cleanup-restore-rejected": "cleanup-restore-rejected",
-        }.get(behavior)
-        if mock_scenario is None:
-            raise ConfigError(f"unsupported integration behavior: {behavior}")
-        CoordinationClient(mock_url, "", self.settings.timeout).request(
-            "POST",
-            "/__mock/v1/reset",
-            {
-                "contract_version": 1,
-                "scenario": mock_scenario,
-                "baseline": "gamma-running",
-                "privacy_canaries": list(_CANARIES),
-            },
-        )
-        environment = os.environ.copy()
-        python_paths = [str(root / "src")]
-        guard_path = os.environ.get("MINING_QA_NETWORK_GUARD_PATH", "").strip()
-        if guard_path:
-            python_paths.insert(0, guard_path)
+        environment = self._runner_environment()
         environment.update(
             {
-                "PYTHONPATH": os.pathsep.join(python_paths),
-                "MINING_QA_MOCK_URL": mock_url,
                 "MINING_QA_TEST_ARTIFACTS": str(artifacts_path),
                 "MINING_QA_URL": self.settings.base_url,
                 "MINER_TEST_ORCHESTRATION_METADATA": json.dumps(metadata, separators=(",", ":")),
@@ -551,14 +688,69 @@ class CentralAgent:
                 "GITHUB_REPOSITORY": str(source["repository"]),
                 "GITHUB_SHA": str(source["commit_sha"]),
                 "GITHUB_REF_NAME": str(source["ref_name"]),
-                "MINING_QA_INTEGRATION_DEVELOPMENT": "1",
-                "MINER_TEST_PRIVACY_CANARIES": json.dumps(_CANARIES),
             }
         )
         if source["pr_number"] is None:
             environment.pop("MINER_TEST_PR_NUMBER", None)
         else:
             environment["MINER_TEST_PR_NUMBER"] = str(source["pr_number"])
+        execution_mode = str(binding["execution"])
+        command: list[str]
+        if execution_mode == "mock":
+            mock_env = str(binding["mock_base_url_env"])
+            mock_url = os.environ.get(mock_env, "").strip()
+            mock_scenario = {
+                "pass": "pass",
+                "test-failure": "test-failure",
+                "cleanup-restore-rejected": "cleanup-restore-rejected",
+            }.get(behavior)
+            if mock_scenario is None:
+                raise ConfigError(f"unsupported integration behavior: {behavior}")
+            CoordinationClient(mock_url, "", self.settings.timeout).request(
+                "POST",
+                "/__mock/v1/reset",
+                {
+                    "contract_version": 1,
+                    "scenario": mock_scenario,
+                    "baseline": "gamma-running",
+                    "privacy_canaries": list(_CANARIES),
+                },
+            )
+            python_paths = [str(root / "src")]
+            guard_path = os.environ.get("MINING_QA_NETWORK_GUARD_PATH", "").strip()
+            if guard_path:
+                python_paths.insert(0, guard_path)
+            environment.update(
+                {
+                    "PYTHONPATH": os.pathsep.join(python_paths),
+                    "MINING_QA_MOCK_URL": mock_url,
+                    "MINING_QA_INTEGRATION_DEVELOPMENT": "1",
+                    "MINER_TEST_PRIVACY_CANARIES": json.dumps(_CANARIES),
+                }
+            )
+            command = [
+                sys.executable,
+                "-m",
+                "miner_testcode",
+                "--config",
+                str(profile),
+                "--pattern",
+                str(requirement["test_pattern"]),
+            ]
+        else:
+            if behavior != "pass":
+                raise ConfigError("integration behavior cannot be applied to a hardware binding")
+            if target.executable is None:
+                raise ConfigError("hardware runner executable disappeared after preflight")
+            command = [
+                str(target.executable),
+                "--config",
+                str(profile),
+                "--pattern",
+                str(requirement["test_pattern"]),
+            ]
+            for device in binding["runner_devices"]:
+                command.extend(["--device", str(device)])
         private_process = work / ".private"
         private_process.mkdir(mode=0o700, exist_ok=True)
         stdout_path = private_process / f"attempt-{attempt_number}.stdout.raw.log"
@@ -568,41 +760,67 @@ class CentralAgent:
             1.0,
             min(float(offer["claim_ttl_seconds"]) / 2.0, 15.0),
         )
-        deadline = time.monotonic() + 60.0
-        with stdout_path.open("wb") as stdout, stderr_path.open("wb") as stderr:
-            process = subprocess.Popen(
-                [sys.executable, "-m", "miner_testcode", "--config", str(profile)],
-                cwd=root,
-                env=environment,
-                stdout=stdout,
-                stderr=stderr,
-            )
-            while True:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    process.kill()
-                    process.wait()
-                    raise subprocess.TimeoutExpired(process.args, 60)
+        timeout_seconds = float(binding["timeout_seconds"])
+        deadline = time.monotonic() + timeout_seconds
+        process = subprocess.Popen(
+            command,
+            cwd=root,
+            env=environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if process.stdout is None or process.stderr is None:
+            process.kill()
+            process.wait()
+            raise ConfigError("runner process did not expose bounded output streams")
+        capture_state: dict[str, Any] = {"size": 0, "overflow": False}
+        capture_lock = threading.Lock()
+        capture_threads = [
+            threading.Thread(
+                target=self._drain_runner_stream,
+                args=(process.stdout, stdout_path, capture_state, capture_lock),
+                daemon=True,
+            ),
+            threading.Thread(
+                target=self._drain_runner_stream,
+                args=(process.stderr, stderr_path, capture_state, capture_lock),
+                daemon=True,
+            ),
+        ]
+        for capture_thread in capture_threads:
+            capture_thread.start()
+        timed_out = False
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                process.kill()
+                process.wait()
+                timed_out = True
+                break
+            try:
+                process.wait(timeout=min(renewal_interval, remaining))
+                break
+            except subprocess.TimeoutExpired:
+                current = self.database.central_execution(execution_id)
+                if current is None:
+                    renewal_errors.append("central execution disappeared during renewal")
+                    continue
                 try:
-                    process.wait(timeout=min(renewal_interval, remaining))
-                    break
-                except subprocess.TimeoutExpired:
-                    current = self.database.central_execution(execution_id)
-                    if current is None:
-                        renewal_errors.append(
-                            "central execution disappeared during renewal"
-                        )
-                        continue
-                    try:
-                        self._renew(current)
-                    except (CoordinationHttpError, OSError, ValueError) as exc:
-                        # Coordination loss must not interrupt Testcode cleanup.
-                        renewal_errors.append(f"{type(exc).__name__}: {exc}"[:500])
+                    self._renew(current)
+                except (ConfigError, CoordinationHttpError, OSError, ValueError) as exc:
+                    # Coordination loss must not interrupt Testcode cleanup.
+                    renewal_errors.append(f"{type(exc).__name__}: {exc}"[:500])
+        for capture_thread in capture_threads:
+            capture_thread.join(timeout=5)
+        if any(capture_thread.is_alive() for capture_thread in capture_threads):
+            raise ConfigError("runner output stream did not close after process exit")
         stdout_path.chmod(0o600)
         stderr_path.chmod(0o600)
         stdout_bytes = stdout_path.read_bytes()
         stderr_bytes = stderr_path.read_bytes()
-        if len(stdout_bytes) + len(stderr_bytes) > MAX_RUNNER_OUTPUT_BYTES:
+        if timed_out:
+            raise subprocess.TimeoutExpired(command, timeout_seconds)
+        if capture_state["overflow"]:
             raise ConfigError("runner output exceeded 1 MiB")
         process_log = (stdout_bytes + b"\n" + stderr_bytes).decode(
             "utf-8", errors="replace"
@@ -624,6 +842,8 @@ class CentralAgent:
         if len(raw_pointer) > 64 * 1024:
             raise ConfigError("runner result pointer exceeds 64 KiB")
         pointer = json.loads(raw_pointer)
+        if not isinstance(pointer, dict):
+            raise ConfigError("runner result pointer is not an object")
         expected_correlation = {
             "central_gate_run_id": execution["central_gate_run_id"],
             "lab_id": self.settings.lab_id,
@@ -638,18 +858,46 @@ class CentralAgent:
         status = pointer.get("status")
         if status not in {"passed", "failed", "error", "skipped"}:
             raise ConfigError("runner pointer has an invalid terminal status")
+        publishers = pointer.get("publishers")
+        if not isinstance(publishers, list) or not all(
+            isinstance(item, dict) for item in publishers
+        ):
+            raise ConfigError("runner pointer publishers are invalid")
+        if not _OPAQUE.fullmatch(str(pointer.get("run_id", ""))):
+            raise ConfigError("runner pointer run identity is invalid")
         publisher = next(
             (
                 item
-                for item in pointer.get("publishers", [])
+                for item in publishers
                 if item.get("name") == "mining_qa_status" and item.get("success") is True
             ),
             None,
         )
-        if not publisher or not _OPAQUE.fullmatch(str(publisher.get("result_id", ""))):
+        if (
+            not publisher
+            or publisher.get("required") is not True
+            or not _OPAQUE.fullmatch(str(publisher.get("result_id", "")))
+        ):
             raise ConfigError("runner pointer lacks a published Status child result")
+        result_url = urlsplit(str(publisher.get("url", "")))
+        status_url = urlsplit(self.settings.base_url)
+        if (
+            result_url.scheme not in {"http", "https"}
+            or result_url.netloc != status_url.netloc
+            or result_url.scheme != status_url.scheme
+        ):
+            raise ConfigError("runner pointer Status child URL has the wrong public origin")
+        successful = pointer.get("successful")
+        if not isinstance(successful, bool) or successful != (status in {"passed", "skipped"}):
+            raise ConfigError("runner pointer success flag disagrees with terminal status")
         completed_at = _now()
-        cleanup = "error" if behavior == "cleanup-restore-rejected" else "restored"
+        cleanup = (
+            "error"
+            if execution_mode == "mock" and behavior == "cleanup-restore-rejected"
+            else "restored"
+            if execution_mode == "mock"
+            else "runner-finished"
+        )
         self.database.finish_central_attempt(
             attempt_id=attempt_id,
             state=str(status),
@@ -657,7 +905,7 @@ class CentralAgent:
             pointer=pointer,
             cleanup_disposition=cleanup,
         )
-        return pointer, started_at, completed_at, sha
+        return pointer, started_at, completed_at, sha, ref
 
     def _completion(
         self,
@@ -666,6 +914,7 @@ class CentralAgent:
         started_at: str,
         completed_at: str,
         testcode_sha: str,
+        testcode_ref: str,
     ) -> dict[str, Any]:
         offer = execution["offer"]
         definition = offer["definition"]
@@ -706,8 +955,8 @@ class CentralAgent:
                 "completed_at": completed_at,
                 "source": offer["source"],
                 "testcode": {
-                    "repository": "johnny9/mining-qa-testcode",
-                    "ref": self._testcode_identity(Path(str(self._binding(offer)["testcode_root"])))[1],
+                    "repository": self.settings.testcode_repository,
+                    "ref": testcode_ref,
                     "commit_sha": testcode_sha,
                 },
                 "children": [
@@ -721,6 +970,65 @@ class CentralAgent:
                     }
                 ],
                 "reason_code": None,
+            },
+        }
+
+    def _error_completion(
+        self,
+        execution: Mapping[str, Any],
+        *,
+        testcode_sha: str,
+        testcode_ref: str,
+    ) -> dict[str, Any]:
+        offer = execution["offer"]
+        definition = offer["definition"]
+        attempts = self.database.central_attempts(str(execution["lab_execution_id"]))
+        if not attempts:
+            raise ConfigError("central error completion has no immutable attempt")
+        attempt = attempts[-1]
+        return {
+            "contract_version": 2,
+            "idempotency_key": f"complete-{_stable_id('id', str(execution['lab_execution_id']))}",
+            "claim": {
+                "claim_id": execution["claim_id"],
+                "claim_generation": execution["claim_generation"],
+                "claim_token": execution["claim_token"],
+            },
+            "private_correlation": {
+                "central_gate_run_id": execution["central_gate_run_id"],
+                "lab_execution_id": execution["lab_execution_id"],
+                "lab_id": self.settings.lab_id,
+                "local_gate_run_id": _stable_id(
+                    "local", str(execution["lab_execution_id"])
+                ),
+                "definition_digest": execution["definition_digest"],
+            },
+            "published_completion": {
+                "central_gate_run_id": execution["central_gate_run_id"],
+                "lab_execution_id": execution["lab_execution_id"],
+                "lab_id": self.settings.lab_id,
+                "public_lab_label": offer["public_lab_label"],
+                "platform_class": offer["platform_class"],
+                "device_model": offer["device_model"],
+                "project_id": definition["project"]["id"],
+                "gate_id": definition["gate"]["id"],
+                "gate_revision_id": definition["gate"]["revision_id"],
+                "suite_id": definition["suite"]["id"],
+                "suite_revision_id": definition["suite"]["revision_id"],
+                "trigger_id": definition["trigger"]["id"],
+                "trigger_revision_id": definition["trigger"]["revision_id"],
+                "definition_digest": execution["definition_digest"],
+                "outcome": "error",
+                "started_at": attempt["started_at"],
+                "completed_at": attempt["completed_at"],
+                "source": offer["source"],
+                "testcode": {
+                    "repository": self.settings.testcode_repository,
+                    "ref": testcode_ref,
+                    "commit_sha": testcode_sha,
+                },
+                "children": [],
+                "reason_code": "local_execution_error",
             },
         }
 
@@ -769,8 +1077,17 @@ class CentralAgent:
         behavior: str,
     ) -> str:
         execution_id = str(execution["lab_execution_id"])
-        if phase == "reclaim":
-            self._claim(execution, next_generation=True)
+        if phase == "reclaim" or (
+            execution["state"] == "claimed" and self._claim_expired(execution)
+        ):
+            try:
+                self._claim(execution, next_generation=True)
+            except CoordinationHttpError as exc:
+                if exc.status == 409 and exc.body.get("error", {}).get("code") == "claim_expired":
+                    self.database.update_central_execution(execution_id, state="conflict")
+                    self.database.release_central_resources(execution_id)
+                    return "conflict"
+                raise
         elif execution["state"] != "claimed":
             self._claim(execution)
         current = self.database.central_execution(execution_id)
@@ -782,25 +1099,84 @@ class CentralAgent:
         current = self.database.central_execution(execution_id)
         if current is None:
             raise ConfigError("renewed central execution disappeared")
+        attempts = self.database.central_attempts(execution_id)
+        if attempts:
+            latest = attempts[-1]
+            saved_pointer = latest.get("pointer")
+            publishable = (
+                latest.get("state") in {"passed", "failed", "error", "skipped"}
+                and isinstance(saved_pointer, dict)
+                and saved_pointer.get("contract_version") == 2
+                and isinstance(saved_pointer.get("publishers"), list)
+                and isinstance(saved_pointer.get("run_id"), str)
+            )
+            if publishable:
+                completion = self._completion(
+                    current,
+                    saved_pointer,
+                    str(latest["started_at"]),
+                    str(latest["completed_at"]),
+                    str(binding["testcode_commit"]),
+                    "detached",
+                )
+                self.database.enqueue_central_completion(
+                    execution_id=execution_id,
+                    idempotency_key=str(completion["idempotency_key"]),
+                    body=completion,
+                )
+                return self._flush(current)
+            if binding["execution"] == "hardware" or len(attempts) >= self.settings.max_attempts:
+                completion = self._error_completion(
+                    current,
+                    testcode_sha=str(binding["testcode_commit"]),
+                    testcode_ref="detached",
+                )
+                self.database.enqueue_central_completion(
+                    execution_id=execution_id,
+                    idempotency_key=str(completion["idempotency_key"]),
+                    body=completion,
+                )
+                return self._flush(current)
+        trusted_target = self._preflight(binding)
         while True:
             try:
-                pointer, started_at, completed_at, sha = self._run_testcode(
+                pointer, started_at, completed_at, sha, ref = self._run_testcode(
                     current, binding, behavior
                 )
                 break
             except (ConfigError, OSError, subprocess.SubprocessError, ValueError) as exc:
-                self.database.fail_running_central_attempt(execution_id, str(exc))
+                hardware = binding["execution"] == "hardware"
+                self.database.fail_running_central_attempt(
+                    execution_id,
+                    str(exc),
+                    cleanup_disposition="uncertain" if hardware else "error",
+                )
                 attempt_count = len(self.database.central_attempts(execution_id))
-                if attempt_count >= self.settings.max_attempts:
-                    self.database.update_central_execution(execution_id, state="error")
-                    self.database.release_central_resources(execution_id)
-                    return "error"
+                if hardware or attempt_count >= self.settings.max_attempts:
+                    completion = self._error_completion(
+                        current,
+                        testcode_sha=trusted_target.sha,
+                        testcode_ref=trusted_target.ref,
+                    )
+                    self.database.enqueue_central_completion(
+                        execution_id=execution_id,
+                        idempotency_key=str(completion["idempotency_key"]),
+                        body=completion,
+                    )
+                    return self._flush(current)
                 delay = min(
                     self.settings.retry_backoff_seconds * (2 ** (attempt_count - 1)),
                     self.settings.max_retry_backoff_seconds,
                 )
                 time.sleep(delay)
-        completion = self._completion(current, pointer, started_at, completed_at, sha)
+        completion = self._completion(
+            current,
+            pointer,
+            started_at,
+            completed_at,
+            sha,
+            ref,
+        )
         self.database.enqueue_central_completion(
             execution_id=execution_id,
             idempotency_key=str(completion["idempotency_key"]),
@@ -822,35 +1198,58 @@ class CentralAgent:
         results: list[str] = []
         for saved in self.database.pending_central_executions(self.settings.lab_id):
             offer = saved["offer"]
-            try:
-                validated = validate_offer(offer, self.settings.lab_id)
-            except (TypeError, ValueError):
-                self._decline(offer, "definition_mismatch" if set(offer) == set(_OFFER_KEYS) else "invalid_offer")
-                results.append("declined")
-                continue
-            binding = self._binding(validated)
-            if behavior == "decline-no-safe-binding" or binding is None:
-                self._decline(validated, "no_safe_binding")
-                results.append("declined")
-                continue
-            try:
-                self._preflight(binding)
-            except ConfigError:
-                self._decline(validated, "no_safe_binding")
-                results.append("declined")
-                continue
             execution = self.database.central_execution(str(saved["lab_execution_id"]))
             if execution is None:
                 raise ConfigError("persisted central execution disappeared")
-            attempts = self.database.central_attempts(str(execution["lab_execution_id"]))
             outbox = self.database.central_outbox(str(execution["lab_execution_id"]))
             if outbox:
                 results.append(self._flush(execution))
                 continue
+            try:
+                validated = validate_offer(offer, self.settings.lab_id)
+            except (TypeError, ValueError):
+                self._decline(
+                    offer,
+                    "definition_mismatch"
+                    if set(offer) == set(_OFFER_KEYS)
+                    else "invalid_offer",
+                    execution=execution,
+                )
+                results.append("declined")
+                continue
+            binding = execution.get("binding") or self._binding(validated)
+            if behavior == "decline-no-safe-binding" or binding is None:
+                self._decline(validated, "no_safe_binding", execution=execution)
+                results.append("declined")
+                continue
+            try:
+                binding = self.database.freeze_central_binding(
+                    str(execution["lab_execution_id"]), binding
+                )
+            except ValueError as exc:
+                raise ConfigError("central private binding snapshot is invalid") from exc
+            try:
+                self._preflight(binding)
+            except ConfigError:
+                attempts = self.database.central_attempts(
+                    str(execution["lab_execution_id"])
+                )
+                if attempts:
+                    # Recovery uses the frozen snapshot and durable attempt below;
+                    # it must not be reclassified from mutable checkout availability.
+                    pass
+                else:
+                    self._decline(validated, "no_safe_binding", execution=execution)
+                    results.append("declined")
+                    continue
+            attempts = self.database.central_attempts(str(execution["lab_execution_id"]))
             if attempts and attempts[-1]["state"] == "running":
                 self.database.fail_running_central_attempt(
                     str(execution["lab_execution_id"]),
                     "agent restarted while the runner attempt was active",
+                    cleanup_disposition=(
+                        "uncertain" if binding["execution"] == "hardware" else "error"
+                    ),
                 )
                 attempts = self.database.central_attempts(str(execution["lab_execution_id"]))
             assignment_id = _stable_id("assignment", str(execution["lab_execution_id"]))
@@ -859,7 +1258,11 @@ class CentralAgent:
                 assignment_id,
                 list(binding["resources"]),
             ):
-                self._decline(validated, "local_capacity_changed")
+                self._decline(
+                    validated,
+                    "local_capacity_changed",
+                    execution=execution,
+                )
                 results.append("declined")
                 continue
             try:
@@ -899,6 +1302,91 @@ def run_central_once(
         behavior=behavior,
         replay_from_zero=replay_from_zero,
     )
+
+
+def register_central_lab(
+    store: ConfigStore,
+    *,
+    public_label: str,
+    agent_environment_file: Path,
+    bootstrap_token_env: str = "MINING_QA_LAB_BOOTSTRAP_SECRET",
+) -> dict[str, str]:
+    document = store.snapshot.document
+    if document["coordination"]["mode"] != "central":
+        raise ConfigError("central registration requires coordination.mode: central")
+    label = public_label.strip()
+    if not label or len(label) > 80 or any(ord(character) < 32 for character in label):
+        raise ConfigError("central public label must be 1-80 printable characters")
+    if not _ENVIRONMENT_NAME.fullmatch(bootstrap_token_env):
+        raise ConfigError("central bootstrap token environment name is invalid")
+    if not agent_environment_file.is_absolute() or agent_environment_file == Path("/"):
+        raise ConfigError("central agent environment file must be an absolute non-root path")
+    if agent_environment_file.is_symlink():
+        raise ConfigError("central agent environment file must not be a symbolic link")
+    destination = agent_environment_file.resolve()
+    if not destination.parent.is_dir():
+        raise ConfigError("central agent environment file parent does not exist")
+    if destination.exists() or destination.is_symlink():
+        raise ConfigError("central agent environment file already exists")
+    bootstrap_token = os.environ.get(bootstrap_token_env, "").strip()
+    if not bootstrap_token:
+        raise ConfigError(
+            f"central bootstrap token environment is not set: {bootstrap_token_env}"
+        )
+    central = document["coordination"]["central"]
+    lab_id = str(central["lab_id"])
+    body = {
+        "contract_version": 2,
+        "idempotency_key": _stable_id(
+            "register", f"{lab_id}:{label}:{AGENT_VERSION}"
+        ),
+        "lab_id": lab_id,
+        "public_lab_label": label,
+        "agent_version": AGENT_VERSION,
+        "supported_coordination_versions": [2],
+        "supported_orchestration_versions": [1, 2],
+    }
+    response = CoordinationClient(
+        str(central["base_url"]),
+        bootstrap_token,
+        float(central["request_timeout_seconds"]),
+    ).request("POST", "/api/v2/labs/register", body)
+    agent_token = response.get("agent_token")
+    if (
+        response.get("contract_version") != 2
+        or response.get("lab_id") != lab_id
+        or not isinstance(agent_token, str)
+        or not _AGENT_TOKEN.fullmatch(agent_token)
+    ):
+        raise ConfigError("central registration returned an invalid agent credential")
+    try:
+        registration_id = _opaque(
+            response.get("registration_id"), "registration.registration_id"
+        )
+        issued_at = _timestamp(response.get("issued_at"), "registration.issued_at")
+    except ValueError as exc:
+        raise ConfigError("central registration returned invalid public metadata") from exc
+    token_environment = str(central["token_env"])
+    descriptor = os.open(
+        destination,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+        0o600,
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(f"{token_environment}={agent_token}\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
+    destination.chmod(0o600)
+    return {
+        "lab_id": lab_id,
+        "registration_id": registration_id,
+        "issued_at": issued_at,
+        "agent_environment_file": str(destination),
+    }
 
 
 def run_central_forever(

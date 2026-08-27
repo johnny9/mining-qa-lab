@@ -213,6 +213,39 @@ class DeploymentInspectorTest(unittest.TestCase):
         self.assertFalse(idle_successful)
         self.assertIn("not observed idle", " ".join(idle_report["issues"]))
 
+    def test_central_service_must_be_paused_and_have_no_active_lease(self) -> None:
+        service = {"LoadState": "loaded", "ActiveState": "active"}
+        base_health = {
+            "status": "ok",
+            "config_revision": "c" * 64,
+            "queued_assignments": 0,
+            "running_assignments": 0,
+        }
+        for paused, active_leases, expected in (
+            (False, 0, False),
+            (True, 1, False),
+            (True, 0, True),
+        ):
+            with self.subTest(paused=paused, active_leases=active_leases):
+                health = {
+                    **base_health,
+                    "central": {
+                        "paused": paused,
+                        "active_leases": active_leases,
+                        "pending_executions": 1,
+                        "pending_outbox": 0,
+                    },
+                }
+                with (
+                    mock.patch.object(self.inspector, "inspect_unit", return_value=service),
+                    mock.patch.object(self.inspector, "inspect_health", return_value=health),
+                ):
+                    report, successful = self.inspector.inspect(
+                        self.arguments(require_idle=True)
+                    )
+                self.assertEqual(report["safe_to_restart"], expected)
+                self.assertEqual(successful, expected)
+
     def test_health_reader_rejects_credentials_and_oversized_body(self) -> None:
         with self.assertRaisesRegex(self.inspector.InspectionError, "credentials"):
             self.inspector.inspect_health(

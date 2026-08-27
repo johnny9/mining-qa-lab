@@ -224,6 +224,12 @@ database migration, so such a change needs a separate backup/restore plan.
 Immediately before stopping, run the inspector with `--require-idle`. It must
 report `running_assignments: 0` and `safe_to_restart: true`.
 
+For central mode, first pause new claims from the authenticated Lab overview or
+`POST /api/v1/central/pause`. The inspector additionally requires
+`central.paused: true` and `central.active_leases: 0`; queued durable work and
+outbox rows may remain. Resume central claims only after the selected release,
+health response, and recent logs have been verified.
+
 If a test is running, wait. Do not cancel it or kill the service just to finish
 the update. Agree on a bounded wait; if it does not become idle, leave the
 running service unchanged and report the candidate as prepared but deferred.

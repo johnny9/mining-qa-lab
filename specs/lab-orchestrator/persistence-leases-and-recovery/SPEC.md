@@ -5,7 +5,7 @@ interrupted work into explicit fail-closed states.
 
 - **Lifecycle:** supported
 - **Owner:** lab-orchestrator maintainers
-- **Last reconciled:** 2026-08-10
+- **Last reconciled:** 2026-08-24
 - **Spec ID:** ORCH-STATE
 
 [Intent](intent.md) · [Acceptance](acceptance.md) · [Design](design.md) ·
@@ -13,6 +13,9 @@ interrupted work into explicit fail-closed states.
 
 ## Changelog
 
+- 2026-08-24: Persisted the selected central private binding before resource
+  lease acquisition and made completion-outbox recovery independent of mutable
+  YAML and checkout availability.
 - 2026-08-16: Normalized assignment and central execution attempts into
   terminal-immutable rows, added restart backfill/migration coverage, and added
   central resource leases plus persistent agent control state.

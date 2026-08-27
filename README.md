@@ -22,6 +22,8 @@ flowchart LR
 The lab service:
 
 - watches configured projects and accepts scheduled or manual requests;
+- alternatively runs as an outbound central agent while Mining QA Status owns
+  versioned projects, suites, gates, and triggers;
 - can opt in to exact, idempotent rerun requests from authenticated Status users;
 - gives each active test exclusive access to its lab devices;
 - can install an exact test runner revision and an approved firmware build;
@@ -102,7 +104,7 @@ links.
   and roll back the systemd service.
 - [Orchestration v1](contracts/orchestration-v1.md) and
   [v2](contracts/orchestration-v2.md): versioned Lab/Testcode interfaces.
-- [Lab coordination v2](contracts/lab-coordination-v2.md): proposed private
+- [Lab coordination v2](contracts/lab-coordination-v2.md): implemented private
   Status/Lab agent interface.
 - [Specifications](specs/README.md): implementation behavior and project
   boundaries.

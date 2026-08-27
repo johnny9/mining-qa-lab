@@ -7,21 +7,52 @@ import json
 import os
 import secrets
 import subprocess
+import threading
 from contextlib import asynccontextmanager
 from ipaddress import ip_address, ip_network
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, TypeVar
+from urllib.parse import quote
 from urllib.request import Request as UrlRequest, urlopen
 
 import yaml
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
+from .archive import MAX_ARTIFACT_BYTES
 from .errors import ConfigError
 from .config import ConfigSnapshot, ConfigStore
 from .database import OrchestratorDatabase
 from .engine import OrchestratorEngine
 from .ui import render_page
+
+
+_WorkerResult = TypeVar("_WorkerResult")
+
+
+async def _run_in_worker(
+    function: Callable[..., _WorkerResult], *args: Any, **kwargs: Any
+) -> _WorkerResult:
+    """Run blocking work without relying on the interpreter's default executor."""
+    results: list[_WorkerResult] = []
+    failures: list[BaseException] = []
+
+    def invoke() -> None:
+        try:
+            results.append(function(*args, **kwargs))
+        except BaseException as exc:
+            failures.append(exc)
+
+    worker = threading.Thread(target=invoke, name="mining-qa-web-worker", daemon=False)
+    worker.start()
+    try:
+        while worker.is_alive():
+            await asyncio.sleep(0.01)
+    finally:
+        worker.join()
+    if failures:
+        raise failures[0]
+    return results[0]
 
 
 def _state_dir(store: ConfigStore) -> Path:
@@ -75,31 +106,41 @@ def create_app(
         else None
     )
     stop = asyncio.Event()
+    central_stop = threading.Event()
 
     async def loop() -> None:
+        if store.snapshot.document["coordination"]["mode"] == "central":
+            from .central import run_central_forever
+
+            failure: list[BaseException] = []
+
+            def central_worker() -> None:
+                try:
+                    run_central_forever(store, database, stop=central_stop)
+                except BaseException as exc:
+                    failure.append(exc)
+
+            worker = threading.Thread(
+                target=central_worker,
+                name="mining-qa-central-agent",
+                daemon=False,
+            )
+            worker.start()
+            while worker.is_alive():
+                await asyncio.sleep(0.1)
+            worker.join()
+            if failure:
+                raise failure[0]
+            return
         interval = float(store.snapshot.document["controller"]["poll_seconds"])
         last_poll = 0.0
         while not stop.is_set():
             try:
-                if store.snapshot.document["coordination"]["mode"] == "central":
-                    from .central import run_central_forever
-
-                    await asyncio.to_thread(
-                        run_central_forever,
-                        store,
-                        database,
-                        max_cycles=1,
-                    )
-                    central_interval = float(
-                        store.snapshot.document["coordination"]["central"]["poll_seconds"]
-                    )
-                    await asyncio.wait_for(stop.wait(), timeout=central_interval)
-                    continue
                 now = asyncio.get_running_loop().time()
                 if now - last_poll >= interval:
-                    await asyncio.to_thread(engine.poll)
+                    await _run_in_worker(engine.poll)
                     last_poll = now
-                while await asyncio.to_thread(engine.tick):
+                while await _run_in_worker(engine.tick):
                     pass
             except TimeoutError:
                 continue
@@ -116,9 +157,12 @@ def create_app(
     async def lifespan(_: FastAPI):
         database.recover_interrupted()
         task = asyncio.create_task(loop())
-        yield
-        stop.set()
-        await task
+        try:
+            yield
+        finally:
+            stop.set()
+            central_stop.set()
+            await task
 
     app = FastAPI(
         title="Miner Test Orchestrator",
@@ -416,7 +460,7 @@ def create_app(
                 status_code=422, detail="device_types must be a list of strings"
             )
         try:
-            return await asyncio.to_thread(
+            return await _run_in_worker(
                 engine.manual_run,
                 gate_id,
                 commit_sha,
@@ -430,7 +474,7 @@ def create_app(
     @app.get("/api/v1/repositories/{repository_id}/pull-requests")
     async def repository_pull_requests(repository_id: str) -> list[dict[str, Any]]:
         try:
-            return await asyncio.to_thread(engine.pull_requests, repository_id)
+            return await _run_in_worker(engine.pull_requests, repository_id)
         except ConfigError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -458,7 +502,7 @@ def create_app(
                 detail="gate does not belong to the selected repository",
             )
         try:
-            return await asyncio.to_thread(
+            return await _run_in_worker(
                 engine.approve_pull_request,
                 gate_id,
                 number,
@@ -542,7 +586,7 @@ def create_app(
         "/api/v1/gate-runs/{run_id}/artifacts/{artifact_id}/download",
         dependencies=[Depends(authorize)],
     )
-    async def download_gate_run_artifact(run_id: str, artifact_id: str) -> FileResponse:
+    async def download_gate_run_artifact(run_id: str, artifact_id: str) -> Response:
         try:
             artifact = database.assignment_artifact(run_id, artifact_id)
         except KeyError as exc:
@@ -553,10 +597,20 @@ def create_app(
             raise HTTPException(status_code=404, detail="artifact not found")
         if not path.is_file():
             raise HTTPException(status_code=410, detail="archived artifact is missing")
-        return FileResponse(
-            path,
+        with path.open("rb") as stream:
+            content = stream.read(MAX_ARTIFACT_BYTES + 1)
+        if len(content) > MAX_ARTIFACT_BYTES:
+            raise HTTPException(status_code=413, detail="archived artifact exceeds its limit")
+        if (
+            len(content) != artifact["size_bytes"]
+            or hashlib.sha256(content).hexdigest() != artifact["sha256"]
+        ):
+            raise HTTPException(status_code=409, detail="archived artifact no longer verifies")
+        filename = quote(Path(artifact["relative_path"]).name, safe="")
+        return Response(
+            content=content,
             media_type=artifact["media_type"],
-            filename=Path(artifact["relative_path"]).name,
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
         )
 
     @app.post("/api/v1/gate-runs/{run_id}/cancel", dependencies=[Depends(authorize)])
@@ -585,7 +639,7 @@ def create_app(
         command = ["python3", "--version"]
         if host.get("transport") == "ssh":
             command = ["ssh", "-o", "ForwardAgent=no", host["ssh_target"], *command]
-        result = await asyncio.to_thread(
+        result = await _run_in_worker(
             subprocess.run,
             command,
             text=True,
@@ -615,7 +669,7 @@ def create_app(
                 "l",
                 "-print",
             ]
-            result = await asyncio.to_thread(
+            result = await _run_in_worker(
                 subprocess.run,
                 command,
                 text=True,
@@ -645,14 +699,14 @@ def create_app(
                     with urlopen(UrlRequest(api, method="GET"), timeout=5) as response:
                         return response.status
 
-                result["api"] = {"ok": True, "status": await asyncio.to_thread(request_api)}
+                result["api"] = {"ok": True, "status": await _run_in_worker(request_api)}
             except Exception as exc:
                 result["api"] = {"ok": False, "detail": str(exc)}
         serial_path = device.get("usb", {}).get("serial_path")
         if serial_path:
             host = section_values("hosts")[device["host"]]
             if host.get("transport") == "ssh":
-                check = await asyncio.to_thread(
+                check = await _run_in_worker(
                     subprocess.run,
                     ["ssh", "-o", "ForwardAgent=no", host["ssh_target"], "test", "-e", serial_path],
                     timeout=10,
@@ -722,6 +776,9 @@ def create_app(
             page,
             store.snapshot,
             runs=database.list_gate_runs(limit=20),
+            central_status=database.central_agent_status()
+            if store.snapshot.document["coordination"]["mode"] == "central"
+            else None,
         )
 
     @app.get("/", response_class=HTMLResponse)

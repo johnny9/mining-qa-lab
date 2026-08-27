@@ -26,12 +26,15 @@ runner cleanup and if private topology never leaves the Lab.
 An explicit central-mode agent registers sanitized capability, pulls and
 claims one valid offer exactly once, freezes one private binding, executes
 through immutable attempts, renews while active, and submits an idempotent
-sanitized completion. Local mode remains compatible and independently usable.
+sanitized completion. A binding explicitly selects either loopback simulation
+or a locally authorized hardware runner; central input can never choose that
+execution class, profile, executable, device, environment, or resource. Local
+mode remains compatible and independently usable.
 
 ## Primary flow
 
-1. Validate central configuration, register/heartbeat, replace subscriptions,
-   and persist the pull cursor.
+1. Validate central configuration, enroll once with an operator bootstrap
+   credential, heartbeat, replace subscriptions, and persist the pull cursor.
 2. Validate and persist an offer, claim it, resolve exactly one private
    binding, acquire local resources, and create a v2 Testcode attempt.
 3. Persist cleanup and child pointer, submit one completion through the outbox,
@@ -41,6 +44,8 @@ sanitized completion. Local mode remains compatible and independently usable.
 
 - Invalid definition, deadline, source, capability, or binding is declined
   before runner/device access with a bounded sanitized reason.
+- A hardware runner failure after launch is terminal and is not automatically
+  retried; the operator must inspect cleanup/device state before new work.
 - Central outage retries only safe/idempotent operations from a bounded outbox.
 - Claim expiry during a run never interrupts cleanup; late completion becomes
   an operator-visible conflict while local evidence remains immutable.
@@ -52,4 +57,4 @@ sanitized completion. Local mode remains compatible and independently usable.
 - Letting Status lease or command local hardware.
 - Uploading private bindings, exact capacity, local logs, or cleanup internals.
 - Automatically importing/deleting existing local definitions.
-- Enabling real Labs or HIL in the proof of concept.
+- Letting a portable definition choose private process arguments or environment.

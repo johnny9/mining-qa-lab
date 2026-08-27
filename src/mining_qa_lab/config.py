@@ -23,6 +23,7 @@ _ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _GIT_REF_CHARS = re.compile(r"^[A-Za-z0-9._/-]+$")
+_ENVIRONMENT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 _SECRET_KEYS = {"token", "password", "private_key", "secret", "api_key"}
 _SECTIONS = {"repositories", "test_modules", "gates"}
 _LAB_SECTIONS = {"hosts", "devices", "setups"}
@@ -199,6 +200,17 @@ def validate_config(document: Mapping[str, Any]) -> dict[str, Any]:
         raise ConfigError(
             "controller.allowed_networks must not be empty when auth_mode is none"
         )
+    controller["environment_allowlist"] = _string_list(
+        controller.get("environment_allowlist", []),
+        "controller.environment_allowlist",
+    )
+    if len(controller["environment_allowlist"]) > 64:
+        raise ConfigError("controller.environment_allowlist must contain at most 64 names")
+    for index, name in enumerate(controller["environment_allowlist"]):
+        if not _ENVIRONMENT_NAME.fullmatch(name):
+            raise ConfigError(
+                f"controller.environment_allowlist[{index}] must be an environment variable name"
+            )
 
     coordination = _mapping(raw.setdefault("coordination", {}), "coordination")
     mode = coordination.setdefault("mode", "local")
@@ -222,10 +234,25 @@ def validate_config(document: Mapping[str, Any]) -> dict[str, Any]:
             )
         central["base_url"] = base_url.rstrip("/")
         _identifier(central.get("lab_id"), "coordination.central.lab_id")
-        _string(
+        token_environment = _string(
             central.get("token_env", "MINING_QA_LAB_AGENT_TOKEN"),
             "coordination.central.token_env",
         )
+        if not _ENVIRONMENT_NAME.fullmatch(token_environment):
+            raise ConfigError("coordination.central.token_env must be an environment variable name")
+        central["token_env"] = token_environment
+        forbidden_runner_environment = {
+            token_environment,
+            "MINING_QA_LAB_BOOTSTRAP_SECRET",
+        }
+        exposed = sorted(
+            forbidden_runner_environment.intersection(controller["environment_allowlist"])
+        )
+        if exposed:
+            raise ConfigError(
+                "controller.environment_allowlist cannot expose central credentials: "
+                + ", ".join(exposed)
+            )
         for key, default, maximum in (
             ("heartbeat_seconds", 30, 900),
             ("poll_seconds", 10, 300),
@@ -262,42 +289,145 @@ def validate_config(document: Mapping[str, Any]) -> dict[str, Any]:
             raise ConfigError(
                 "bindings.suite_requirements must not be empty in central mode"
             )
+        if len(suite_bindings) > 64:
+            raise ConfigError("bindings.suite_requirements must contain at most 64 bindings")
         for requirement_id, raw_binding in suite_bindings.items():
             _identifier(requirement_id, "bindings.suite_requirements requirement id")
             binding = _mapping(
                 raw_binding,
                 f"bindings.suite_requirements.{requirement_id}",
             )
-            _absolute_path(
+            binding["profile"] = _absolute_path(
                 binding.get("profile"),
                 f"bindings.suite_requirements.{requirement_id}.profile",
             )
-            _absolute_path(
+            binding["testcode_root"] = _absolute_path(
                 binding.get("testcode_root"),
                 f"bindings.suite_requirements.{requirement_id}.testcode_root",
             )
-            _string(
-                binding.get("mock_base_url_env", "MINING_QA_MOCK_URL"),
-                f"bindings.suite_requirements.{requirement_id}.mock_base_url_env",
+            execution = binding.get("execution")
+            if execution not in {"mock", "hardware"}:
+                raise ConfigError(
+                    f"bindings.suite_requirements.{requirement_id}.execution "
+                    "must be mock or hardware"
+                )
+            timeout_seconds = binding.setdefault(
+                "timeout_seconds", 60 if execution == "mock" else 3600
             )
-            _string(
+            if (
+                isinstance(timeout_seconds, bool)
+                or not isinstance(timeout_seconds, (int, float))
+                or not 0 < timeout_seconds <= 86400
+            ):
+                raise ConfigError(
+                    f"bindings.suite_requirements.{requirement_id}.timeout_seconds "
+                    "must be positive and at most 86400"
+                )
+            if execution == "mock":
+                if parsed_url.hostname not in loopback_names:
+                    raise ConfigError(
+                        f"bindings.suite_requirements.{requirement_id} mock binding "
+                        "requires a loopback central Status service"
+                    )
+                if "runner_executable" in binding or "runner_devices" in binding:
+                    raise ConfigError(
+                        f"bindings.suite_requirements.{requirement_id} mock binding "
+                        "cannot configure a hardware runner"
+                    )
+                mock_environment = _string(
+                    binding.get("mock_base_url_env", "MINING_QA_MOCK_URL"),
+                    f"bindings.suite_requirements.{requirement_id}.mock_base_url_env",
+                )
+                if not _ENVIRONMENT_NAME.fullmatch(mock_environment):
+                    raise ConfigError(
+                        f"bindings.suite_requirements.{requirement_id}.mock_base_url_env "
+                        "must be an environment variable name"
+                    )
+                binding["mock_base_url_env"] = mock_environment
+            else:
+                if "mock_base_url_env" in binding:
+                    raise ConfigError(
+                        f"bindings.suite_requirements.{requirement_id} hardware binding "
+                        "cannot configure a mock endpoint"
+                    )
+                binding["runner_executable"] = _absolute_path(
+                    binding.get("runner_executable"),
+                    f"bindings.suite_requirements.{requirement_id}.runner_executable",
+                )
+                binding["runner_devices"] = _string_list(
+                    binding.get("runner_devices"),
+                    f"bindings.suite_requirements.{requirement_id}.runner_devices",
+                    required=True,
+                )
+                if len(binding["runner_devices"]) > 32 or any(
+                    len(device) > 128 or any(ord(character) < 32 for character in device)
+                    for device in binding["runner_devices"]
+                ):
+                    raise ConfigError(
+                        f"bindings.suite_requirements.{requirement_id}.runner_devices "
+                        "must contain at most 32 bounded printable names"
+                    )
+            allowed_binding_fields = {
+                "execution",
+                "profile",
+                "testcode_root",
+                "testcode_commit",
+                "timeout_seconds",
+                "platform_class",
+                "device_model",
+                "capabilities",
+                "resources",
+                "mock_base_url_env" if execution == "mock" else "runner_executable",
+            }
+            if execution == "hardware":
+                allowed_binding_fields.add("runner_devices")
+            unknown_binding_fields = sorted(set(binding) - allowed_binding_fields)
+            if unknown_binding_fields:
+                raise ConfigError(
+                    f"bindings.suite_requirements.{requirement_id} contains unsupported fields: "
+                    + ", ".join(unknown_binding_fields)
+                )
+            platform_class = _string(
                 binding.get("platform_class"),
                 f"bindings.suite_requirements.{requirement_id}.platform_class",
             )
-            _string(
+            device_model = _string(
                 binding.get("device_model"),
                 f"bindings.suite_requirements.{requirement_id}.device_model",
             )
+            if len(platform_class) > 80 or len(device_model) > 80:
+                raise ConfigError(
+                    f"bindings.suite_requirements.{requirement_id} platform/model "
+                    "must be at most 80 characters"
+                )
+            binding["platform_class"] = platform_class
+            binding["device_model"] = device_model
             binding["capabilities"] = _string_list(
                 binding.get("capabilities"),
                 f"bindings.suite_requirements.{requirement_id}.capabilities",
                 required=True,
             )
+            if len(binding["capabilities"]) > 64:
+                raise ConfigError(
+                    f"bindings.suite_requirements.{requirement_id}.capabilities "
+                    "must contain at most 64 entries"
+                )
+            for index, capability in enumerate(binding["capabilities"]):
+                if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", capability):
+                    raise ConfigError(
+                        f"bindings.suite_requirements.{requirement_id}.capabilities[{index}] "
+                        "is invalid"
+                    )
             binding["resources"] = _string_list(
                 binding.get("resources"),
                 f"bindings.suite_requirements.{requirement_id}.resources",
                 required=True,
             )
+            if len(binding["resources"]) > 64:
+                raise ConfigError(
+                    f"bindings.suite_requirements.{requirement_id}.resources "
+                    "must contain at most 64 entries"
+                )
             for index, resource in enumerate(binding["resources"]):
                 if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", resource):
                     raise ConfigError(

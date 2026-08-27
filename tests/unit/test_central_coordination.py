@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import io
 import json
+import os
 import subprocess
 import tempfile
 import threading
@@ -12,10 +14,13 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from mining_qa_lab.central import (
+    MAX_RUNNER_OUTPUT_BYTES,
     CentralAgent,
     CentralSettings,
+    RunnerPreflight,
     _stable_id,
     canonical_digest,
+    register_central_lab,
     run_central_forever,
     validate_offer,
 )
@@ -79,6 +84,33 @@ def offer() -> dict:
 
 
 class CentralConfigurationTest(unittest.TestCase):
+    @staticmethod
+    def central_document(root: Path) -> dict:
+        return {
+            "schema_version": 1,
+            "controller": {"state_dir": str(root / "state")},
+            "coordination": {
+                "mode": "central",
+                "central": {
+                    "base_url": "http://127.0.0.1:3000",
+                    "lab_id": "lab-east",
+                    "token_env": "TEST_LAB_TOKEN",
+                    "subscriptions": {"gates": ["firmware-advisory"]},
+                },
+            },
+            "bindings": {
+                "suite_requirements": {
+                    "gamma-http-and-stratum": {
+                        "execution": "mock",
+                        "profile": str(root / "profile.toml"),
+                        "testcode_root": str(root / "testcode"),
+                        "mock_base_url_env": "TEST_MOCK_URL",
+                        **BINDING_FIELDS,
+                    }
+                }
+            },
+        }
+
     def test_central_mode_requires_loopback_or_https_and_private_binding(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -97,6 +129,7 @@ class CentralConfigurationTest(unittest.TestCase):
                 "bindings": {
                     "suite_requirements": {
                         "gamma-http-and-stratum": {
+                            "execution": "mock",
                             "profile": str(root / "profile.toml"),
                             "testcode_root": str(root / "testcode"),
                             "mock_base_url_env": "TEST_MOCK_URL",
@@ -107,6 +140,10 @@ class CentralConfigurationTest(unittest.TestCase):
             }
             normalized = validate_config(document)
             self.assertEqual(normalized["coordination"]["mode"], "central")
+
+            document["coordination"]["central"]["base_url"] = "https://status.example"
+            with self.assertRaisesRegex(ConfigError, "loopback central Status"):
+                validate_config(document)
 
             document["coordination"]["central"]["base_url"] = "http://status.example"
             with self.assertRaisesRegex(ConfigError, "HTTPS"):
@@ -121,7 +158,7 @@ class CentralConfigurationTest(unittest.TestCase):
                 "coordination": {
                     "mode": "central",
                     "central": {
-                        "base_url": "https://status.example",
+                        "base_url": "http://127.0.0.1:3000",
                         "lab_id": "lab-east",
                         "subscriptions": {"gates": ["firmware-advisory"]},
                     },
@@ -129,6 +166,7 @@ class CentralConfigurationTest(unittest.TestCase):
                 "bindings": {
                     "suite_requirements": {
                         "gamma-http-and-stratum": {
+                            "execution": "mock",
                             "profile": str(root / "profile.toml"),
                             "testcode_root": str(root / "testcode"),
                             **BINDING_FIELDS,
@@ -138,6 +176,40 @@ class CentralConfigurationTest(unittest.TestCase):
                 "repositories": {"local": {"repository": "owner/local"}},
             }
             with self.assertRaisesRegex(ConfigError, "cannot merge"):
+                validate_config(document)
+
+    def test_binding_execution_mode_is_explicit_and_disjoint(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            document = self.central_document(root)
+            binding = document["bindings"]["suite_requirements"][
+                "gamma-http-and-stratum"
+            ]
+            binding.pop("execution")
+            with self.assertRaisesRegex(ConfigError, "must be mock or hardware"):
+                validate_config(document)
+
+            binding["execution"] = "hardware"
+            binding.pop("mock_base_url_env")
+            binding["runner_executable"] = str(root / "venv/bin/miner-test")
+            binding["runner_devices"] = ["gamma-02"]
+            normalized = validate_config(document)
+            normalized_binding = normalized["bindings"]["suite_requirements"][
+                "gamma-http-and-stratum"
+            ]
+            self.assertEqual(normalized_binding["execution"], "hardware")
+            self.assertEqual(normalized_binding["timeout_seconds"], 3600)
+
+            binding["mock_base_url_env"] = "TEST_MOCK_URL"
+            with self.assertRaisesRegex(ConfigError, "cannot configure a mock endpoint"):
+                validate_config(document)
+
+    def test_central_credential_cannot_enter_runner_allowlist(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            document = self.central_document(root)
+            document["controller"]["environment_allowlist"] = ["TEST_LAB_TOKEN"]
+            with self.assertRaisesRegex(ConfigError, "cannot expose central credentials"):
                 validate_config(document)
 
 
@@ -153,6 +225,21 @@ class CentralContractTest(unittest.TestCase):
         mismatched = {**value, "definition_digest": "b" * 64}
         with self.assertRaisesRegex(ValueError, "digest mismatch"):
             validate_offer(mismatched, "lab-east")
+
+        for remote in (
+            "git@github.com:johnny9/mining-qa-testcode.git",
+            "ssh://git@github.com/johnny9/mining-qa-testcode.git",
+            "https://github.com/johnny9/mining-qa-testcode.git",
+        ):
+            self.assertEqual(
+                CentralAgent._repository_from_remote(remote),
+                "johnny9/mining-qa-testcode",
+            )
+        self.assertIsNone(
+            CentralAgent._repository_from_remote(
+                "https://token@github.com/johnny9/mining-qa-testcode.git"
+            )
+        )
 
     def test_cursor_offer_attempt_and_outbox_survive_reopen_without_duplicates(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -196,6 +283,16 @@ class CentralContractTest(unittest.TestCase):
                 )
             )
             self.assertTrue(database.central_agent_status()["active_leases"])
+            frozen_binding = database.freeze_central_binding(
+                "execution-1",
+                {"execution": "mock", "resources": ["mock:gamma-602"]},
+            )
+            self.assertEqual(frozen_binding["execution"], "mock")
+            with self.assertRaisesRegex(ValueError, "changed after it was frozen"):
+                database.freeze_central_binding(
+                    "execution-1",
+                    {"execution": "hardware", "resources": ["device:gamma-02"]},
+                )
             self.assertTrue(database.set_central_agent_paused(True)["paused"])
             database.enqueue_central_completion(
                 execution_id="execution-1",
@@ -207,12 +304,47 @@ class CentralContractTest(unittest.TestCase):
             reopened = OrchestratorDatabase(path)
             self.assertEqual(reopened.cursor("central:lab-east")["value"], "1")
             self.assertEqual(len(reopened.pending_central_executions("lab-east")), 1)
+            self.assertEqual(
+                reopened.central_execution("execution-1")["binding"], frozen_binding
+            )
             attempts = reopened.central_attempts("execution-1")
             self.assertEqual(len(attempts), 2)
             self.assertEqual(attempts[0]["state"], "error")
             self.assertTrue(reopened.central_agent_status()["paused"])
             self.assertEqual(reopened.central_outbox("execution-1")["state"], "pending")
             reopened.close()
+
+    def test_durable_outbox_flush_precedes_mutable_binding_and_preflight(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = OrchestratorDatabase(Path(directory) / "orchestrator.sqlite3")
+            database.persist_central_page(lab_id="lab-east", cursor="1", offers=[offer()])
+            database.update_central_execution(
+                "execution-1",
+                state="claimed",
+                claim_id="claim-1",
+                claim_generation=1,
+                claim_token="private-claim-token",
+                claim_expires_at=(datetime.now(UTC) + timedelta(minutes=2)).isoformat(),
+            )
+            database.enqueue_central_completion(
+                execution_id="execution-1",
+                idempotency_key="complete-execution-1",
+                body={"contract_version": 2},
+            )
+            agent = CentralAgent.__new__(CentralAgent)
+            agent.settings = SimpleNamespace(lab_id="lab-east")
+            agent.database = database
+            agent.announce = Mock()
+            agent.pull = Mock(return_value=[])
+            agent._flush = Mock(return_value="completed")
+            agent._binding = Mock(side_effect=AssertionError("binding must not be read"))
+            agent._preflight = Mock(side_effect=AssertionError("preflight must not run"))
+
+            self.assertEqual(agent.process(phase="run", behavior="pass"), ["completed"])
+            agent._flush.assert_called_once()
+            agent._binding.assert_not_called()
+            agent._preflight.assert_not_called()
+            database.close()
 
     def test_process_releases_private_resources_when_claim_path_fails(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -231,6 +363,51 @@ class CentralContractTest(unittest.TestCase):
             with self.assertRaisesRegex(ConfigError, "claim failed"):
                 agent.process(phase="run", behavior="pass")
             self.assertEqual(database.central_agent_status()["active_leases"], 0)
+            database.close()
+
+    def test_capacity_decline_includes_an_existing_claim(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = OrchestratorDatabase(Path(directory) / "orchestrator.sqlite3")
+            blocker = offer()
+            blocker["central_gate_run_id"] = "run-2"
+            blocker["lab_execution_id"] = "execution-2"
+            database.persist_central_page(
+                lab_id="lab-east", cursor="1", offers=[blocker]
+            )
+            self.assertTrue(
+                database.acquire_central_resources(
+                    "execution-2", "assignment-2", ["device:gamma-02"]
+                )
+            )
+            database.update_central_execution("execution-2", state="completed")
+            database.persist_central_page(
+                lab_id="lab-east", cursor="2", offers=[offer()]
+            )
+            database.update_central_execution(
+                "execution-1",
+                state="claimed",
+                claim_id="claim-1",
+                claim_generation=1,
+                claim_token="private-claim-token",
+                claim_expires_at=(datetime.now(UTC) + timedelta(minutes=2)).isoformat(),
+            )
+            binding = {
+                "execution": "hardware",
+                "resources": ["device:gamma-02"],
+            }
+            agent = CentralAgent.__new__(CentralAgent)
+            agent.settings = SimpleNamespace(lab_id="lab-east")
+            agent.database = database
+            agent.announce = Mock()
+            agent.pull = Mock(return_value=[])
+            agent._binding = Mock(return_value=binding)
+            agent._preflight = Mock()
+            agent._decline = Mock()
+
+            self.assertEqual(agent.process(phase="run", behavior="pass"), ["declined"])
+            declined_execution = agent._decline.call_args.kwargs["execution"]
+            self.assertEqual(declined_execution["state"], "claimed")
+            self.assertEqual(declined_execution["claim_id"], "claim-1")
             database.close()
 
     def test_active_runner_renews_claim_without_exposing_raw_output(self) -> None:
@@ -252,9 +429,11 @@ class CentralContractTest(unittest.TestCase):
                 claim_expires_at=(datetime.now(UTC) + timedelta(seconds=30)).isoformat(),
             )
             binding = {
+                "execution": "mock",
                 "profile": str(profile),
                 "testcode_root": str(root),
                 "mock_base_url_env": "TEST_MOCK_URL",
+                "timeout_seconds": 60,
                 **BINDING_FIELDS,
             }
             settings = CentralSettings(
@@ -276,7 +455,11 @@ class CentralContractTest(unittest.TestCase):
             assignment_id = _stable_id("assignment", "execution-1")
             attempt_id = _stable_id("attempt", "execution-1:1")
             pointer_path = (
-                state_dir / "central-artifacts" / "execution-1" / "result-pointer.json"
+                state_dir
+                / "central-artifacts"
+                / "execution-1"
+                / "attempt-1"
+                / "result-pointer.json"
             )
             pointer_path.parent.mkdir(parents=True)
             pointer_path.write_text(
@@ -284,11 +467,13 @@ class CentralContractTest(unittest.TestCase):
                     {
                         "contract_version": 2,
                         "run_id": "runner-1",
+                        "successful": True,
                         "status": "passed",
                         "publishers": [
                             {
                                 "name": "mining_qa_status",
                                 "success": True,
+                                "required": True,
                                 "result_id": "child-result-1",
                                 "url": "http://127.0.0.1:3000/results/child-result-1",
                             }
@@ -308,12 +493,12 @@ class CentralContractTest(unittest.TestCase):
             )
 
             class FakeProcess:
-                def __init__(self, args, *, stdout, stderr, **_kwargs):
+                def __init__(self, args, **_kwargs):
                     self.args = args
                     self.returncode = None
                     self.waits = 0
-                    stdout.write(b"private stdout\n")
-                    stderr.write(b"private stderr\n")
+                    self.stdout = io.BytesIO(b"private stdout\n")
+                    self.stderr = io.BytesIO(b"private stderr\n")
 
                 def wait(self, timeout=None):
                     self.waits += 1
@@ -325,7 +510,15 @@ class CentralContractTest(unittest.TestCase):
                 def kill(self):
                     self.returncode = -9
 
-            agent._preflight = Mock(return_value=(root, profile, "a" * 40, "main"))
+            agent._preflight = Mock(
+                return_value=RunnerPreflight(
+                    root=root,
+                    profile=profile,
+                    executable=None,
+                    sha="a" * 40,
+                    ref="main",
+                )
+            )
             agent._renew = Mock()
             with (
                 patch("mining_qa_lab.central.subprocess.Popen", FakeProcess),
@@ -341,6 +534,398 @@ class CentralContractTest(unittest.TestCase):
             private = pointer_path.parent / ".private"
             self.assertIn("private stdout", (private / "attempt-1.stdout.raw.log").read_text())
             database.close()
+
+    def test_hardware_runner_uses_private_devices_portable_pattern_and_allowlisted_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state_dir = root / "state"
+            state_dir.mkdir()
+            profile = root / "hardware.toml"
+            profile.write_text("", encoding="utf-8")
+            executable = root / "venv/bin/miner-test"
+            executable.parent.mkdir(parents=True)
+            executable.write_text("#!/bin/sh\n", encoding="utf-8")
+            executable.chmod(0o700)
+            database = OrchestratorDatabase(state_dir / "orchestrator.sqlite3")
+            value = offer()
+            database.persist_central_page(lab_id="lab-east", cursor="1", offers=[value])
+            database.update_central_execution(
+                "execution-1",
+                state="claimed",
+                claim_id="claim-1",
+                claim_generation=1,
+                claim_token="private-claim-token",
+                claim_expires_at=(datetime.now(UTC) + timedelta(minutes=2)).isoformat(),
+            )
+            binding = {
+                "execution": "hardware",
+                "profile": str(profile),
+                "testcode_root": str(root),
+                "runner_executable": str(executable),
+                "runner_devices": ["gamma-02", "stratum-probe"],
+                "timeout_seconds": 120,
+                **BINDING_FIELDS,
+            }
+            settings = CentralSettings(
+                base_url="http://127.0.0.1:3000",
+                lab_id="lab-east",
+                token="private-agent-token",
+                timeout=1,
+                subscriptions=("firmware-advisory",),
+                state_dir=state_dir,
+                bindings={"gamma-http-and-stratum": binding},
+                heartbeat_seconds=30,
+                poll_seconds=1,
+                retry_backoff_seconds=1,
+                max_retry_backoff_seconds=2,
+                max_attempts=3,
+                environment_allowlist=("DEVICE_API_TOKEN",),
+                token_environment="MINING_QA_TOKEN",
+            )
+            agent = CentralAgent(settings, database)
+            execution = database.central_execution("execution-1")
+            assignment_id = _stable_id("assignment", "execution-1")
+            attempt_id = _stable_id("attempt", "execution-1:1")
+            pointer_path = (
+                state_dir
+                / "central-artifacts/execution-1/attempt-1/result-pointer.json"
+            )
+            pointer_path.parent.mkdir(parents=True)
+            pointer_path.write_text(
+                json.dumps(
+                    {
+                        "contract_version": 2,
+                        "run_id": "runner-hardware-1",
+                        "successful": True,
+                        "status": "passed",
+                        "publishers": [
+                            {
+                                "name": "mining_qa_status",
+                                "success": True,
+                                "required": True,
+                                "result_id": "child-result-1",
+                                "url": "http://127.0.0.1:3000/results/child-result-1",
+                            }
+                        ],
+                        "correlation": {
+                            "central_gate_run_id": "run-1",
+                            "lab_id": "lab-east",
+                            "lab_execution_id": "execution-1",
+                            "local_gate_run_id": _stable_id("local", "execution-1"),
+                            "assignment_id": assignment_id,
+                            "attempt_id": attempt_id,
+                            "definition_digest": value["definition_digest"],
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            invocations: list[dict] = []
+
+            class FakeProcess:
+                def __init__(self, args, **kwargs):
+                    invocations.append({"args": args, **kwargs})
+                    self.returncode = 0
+                    self.stdout = io.BytesIO(b"hardware output\n")
+                    self.stderr = io.BytesIO()
+
+                def wait(self, timeout=None):
+                    return 0
+
+                def kill(self):
+                    self.returncode = -9
+
+            agent._preflight = Mock(
+                return_value=RunnerPreflight(
+                    root=root,
+                    profile=profile,
+                    executable=executable,
+                    sha="a" * 40,
+                    ref="main",
+                )
+            )
+            with (
+                patch("mining_qa_lab.central.subprocess.Popen", FakeProcess),
+                patch.dict(
+                    os.environ,
+                    {
+                        "PATH": "/usr/bin",
+                        "MINING_QA_TOKEN": "central-agent-secret",
+                        "DEVICE_API_TOKEN": "device-api-secret",
+                        "UNRELATED_SECRET": "must-not-pass",
+                        "MINING_QA_MOCK_URL": "http://127.0.0.1:39001",
+                    },
+                    clear=True,
+                ),
+            ):
+                pointer, *_ = agent._run_testcode(execution, binding, "pass")
+
+            self.assertEqual(pointer["status"], "passed")
+            self.assertEqual(
+                invocations[0]["args"],
+                [
+                    str(executable),
+                    "--config",
+                    str(profile),
+                    "--pattern",
+                    "test_integration_smoke.py",
+                    "--device",
+                    "gamma-02",
+                    "--device",
+                    "stratum-probe",
+                ],
+            )
+            runner_environment = invocations[0]["env"]
+            self.assertEqual(runner_environment["DEVICE_API_TOKEN"], "device-api-secret")
+            self.assertNotIn("MINING_QA_TOKEN", runner_environment)
+            self.assertNotIn("UNRELATED_SECRET", runner_environment)
+            self.assertNotIn("MINING_QA_MOCK_URL", runner_environment)
+            self.assertNotIn("MINING_QA_INTEGRATION_DEVELOPMENT", runner_environment)
+            database.close()
+
+    def test_hardware_failure_is_terminal_without_automatic_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = OrchestratorDatabase(root / "orchestrator.sqlite3")
+            database.persist_central_page(lab_id="lab-east", cursor="1", offers=[offer()])
+            database.update_central_execution(
+                "execution-1",
+                state="claimed",
+                claim_id="claim-1",
+                claim_generation=1,
+                claim_token="private-claim-token",
+                claim_expires_at=(datetime.now(UTC) + timedelta(minutes=2)).isoformat(),
+            )
+            binding = {
+                "execution": "hardware",
+                "resources": ["device:gamma-02"],
+            }
+            settings = CentralSettings(
+                base_url="http://127.0.0.1:3000",
+                lab_id="lab-east",
+                token="private-agent-token",
+                timeout=1,
+                subscriptions=("firmware-advisory",),
+                state_dir=root,
+                bindings={"gamma-http-and-stratum": binding},
+                heartbeat_seconds=30,
+                poll_seconds=1,
+                retry_backoff_seconds=0.001,
+                max_retry_backoff_seconds=0.002,
+                max_attempts=3,
+            )
+            agent = CentralAgent(settings, database)
+            target = RunnerPreflight(root, root / "profile.toml", root / "miner-test", "a" * 40, "main")
+            agent._preflight = Mock(return_value=target)
+            agent._renew = Mock()
+            agent._flush = Mock(return_value="completed")
+
+            def fail_once(execution, _binding, _behavior):
+                database.start_central_attempt(
+                    execution_id="execution-1",
+                    assignment_id=_stable_id("assignment", "execution-1"),
+                    attempt_id=_stable_id("attempt", "execution-1:1"),
+                    started_at=datetime.now(UTC).isoformat(),
+                    max_attempts=3,
+                )
+                raise ConfigError("private device failure")
+
+            agent._run_testcode = Mock(side_effect=fail_once)
+            outcome = agent._execute_with_lease(
+                database.central_execution("execution-1"),
+                binding,
+                phase="run",
+                behavior="pass",
+            )
+
+            self.assertEqual(outcome, "completed")
+            agent._run_testcode.assert_called_once()
+            attempt = database.central_attempts("execution-1")[0]
+            self.assertEqual(attempt["cleanup_disposition"], "uncertain")
+            completion = database.central_outbox("execution-1")["body"]
+            self.assertEqual(completion["published_completion"]["outcome"], "error")
+            self.assertEqual(completion["published_completion"]["children"], [])
+            self.assertEqual(
+                completion["published_completion"]["reason_code"],
+                "local_execution_error",
+            )
+            self.assertNotIn("private device failure", json.dumps(completion))
+            database.close()
+
+    def test_runner_output_capture_is_bounded(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = {"size": 0, "overflow": False}
+            lock = threading.Lock()
+            CentralAgent._drain_runner_stream(
+                io.BytesIO(b"x" * (MAX_RUNNER_OUTPUT_BYTES + 100)),
+                root / "stdout.log",
+                state,
+                lock,
+            )
+            CentralAgent._drain_runner_stream(
+                io.BytesIO(b"y" * 100),
+                root / "stderr.log",
+                state,
+                lock,
+            )
+            self.assertEqual(state["size"], MAX_RUNNER_OUTPUT_BYTES)
+            self.assertTrue(state["overflow"])
+            self.assertLessEqual(
+                (root / "stdout.log").stat().st_size
+                + (root / "stderr.log").stat().st_size,
+                MAX_RUNNER_OUTPUT_BYTES,
+            )
+
+    def test_renewal_key_advances_only_after_observed_lease_progress(self) -> None:
+        agent = CentralAgent.__new__(CentralAgent)
+        agent.client = Mock(
+            request=Mock(
+                side_effect=[
+                    {"lease_expires_at": "2026-08-24T12:02:00Z"},
+                    {"lease_expires_at": "2026-08-24T12:02:00Z"},
+                    {"lease_expires_at": "2026-08-24T12:03:00Z"},
+                ]
+            )
+        )
+        agent.database = Mock()
+        execution = {
+            "lab_execution_id": "execution-1",
+            "claim_id": "claim-1",
+            "claim_generation": 1,
+            "claim_token": "private-claim-token",
+            "claim_expires_at": "2026-08-24T12:01:00Z",
+        }
+
+        agent._renew(execution)
+        agent._renew(execution)
+        agent._renew({**execution, "claim_expires_at": "2026-08-24T12:02:00Z"})
+
+        bodies = [call.args[2] for call in agent.client.request.call_args_list]
+        self.assertEqual(bodies[0]["idempotency_key"], bodies[1]["idempotency_key"])
+        self.assertNotEqual(bodies[1]["idempotency_key"], bodies[2]["idempotency_key"])
+
+    def test_interrupted_hardware_attempt_is_completed_without_relaunch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = OrchestratorDatabase(root / "orchestrator.sqlite3")
+            database.persist_central_page(lab_id="lab-east", cursor="1", offers=[offer()])
+            database.update_central_execution(
+                "execution-1",
+                state="claimed",
+                claim_id="claim-1",
+                claim_generation=1,
+                claim_token="private-claim-token",
+                claim_expires_at=(datetime.now(UTC) + timedelta(minutes=2)).isoformat(),
+            )
+            database.start_central_attempt(
+                execution_id="execution-1",
+                assignment_id=_stable_id("assignment", "execution-1"),
+                attempt_id=_stable_id("attempt", "execution-1:1"),
+                started_at=datetime.now(UTC).isoformat(),
+            )
+            database.fail_running_central_attempt(
+                "execution-1",
+                "agent restarted while hardware state was unknown",
+                cleanup_disposition="uncertain",
+            )
+            binding = {
+                "execution": "hardware",
+                "resources": ["device:gamma-02"],
+                "testcode_commit": "a" * 40,
+            }
+            settings = CentralSettings(
+                base_url="http://127.0.0.1:3000",
+                lab_id="lab-east",
+                token="private-agent-token",
+                timeout=1,
+                subscriptions=("firmware-advisory",),
+                state_dir=root,
+                bindings={"gamma-http-and-stratum": binding},
+                heartbeat_seconds=30,
+                poll_seconds=1,
+                retry_backoff_seconds=0.001,
+                max_retry_backoff_seconds=0.002,
+                max_attempts=3,
+            )
+            agent = CentralAgent(settings, database)
+            agent._preflight = Mock(
+                return_value=RunnerPreflight(
+                    root,
+                    root / "profile.toml",
+                    root / "miner-test",
+                    "a" * 40,
+                    "main",
+                )
+            )
+            agent._renew = Mock()
+            agent._run_testcode = Mock()
+            agent._flush = Mock(return_value="completed")
+
+            outcome = agent._execute_with_lease(
+                database.central_execution("execution-1"),
+                binding,
+                phase="run",
+                behavior="pass",
+            )
+
+            self.assertEqual(outcome, "completed")
+            agent._run_testcode.assert_not_called()
+            self.assertEqual(
+                database.central_outbox("execution-1")["body"]["published_completion"][
+                    "reason_code"
+                ],
+                "local_execution_error",
+            )
+            database.close()
+
+    def test_registration_writes_only_a_mode_0600_agent_environment_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            destination = root / "agent.env"
+            document = CentralConfigurationTest.central_document(root)
+            document = validate_config(document)
+            store = SimpleNamespace(
+                snapshot=SimpleNamespace(document=document),
+            )
+            response = {
+                "contract_version": 2,
+                "lab_id": "lab-east",
+                "registration_id": "registration-lab-east-1",
+                "agent_token": "mqa_lab_" + "a" * 43,
+                "issued_at": datetime.now(UTC).isoformat(),
+            }
+            with (
+                patch.dict(
+                    os.environ,
+                    {"MINING_QA_LAB_BOOTSTRAP_SECRET": "bootstrap-secret"},
+                    clear=True,
+                ),
+                patch(
+                    "mining_qa_lab.central.CoordinationClient.request",
+                    return_value=response,
+                ) as request,
+            ):
+                result = register_central_lab(
+                    store,
+                    public_label="East Lab",
+                    agent_environment_file=destination,
+                )
+
+            self.assertEqual(destination.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(
+                destination.read_text(encoding="utf-8"),
+                f"TEST_LAB_TOKEN={response['agent_token']}\n",
+            )
+            self.assertNotIn("agent_token", result)
+            self.assertNotIn(response["agent_token"], json.dumps(result))
+            self.assertEqual(request.call_args.args[1], "/api/v2/labs/register")
+            with self.assertRaisesRegex(ConfigError, "absolute non-root"):
+                register_central_lab(
+                    store,
+                    public_label="East Lab",
+                    agent_environment_file=Path("relative.env"),
+                )
 
     def test_continuous_loop_honors_persisted_backoff_pause_and_heartbeat_cadence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

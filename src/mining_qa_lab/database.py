@@ -139,6 +139,7 @@ create table if not exists central_executions (
     claim_token text,
     claim_expires_at text,
     assignment_id text,
+    binding_json text,
     created_at real not null,
     updated_at real not null,
     unique(central_gate_run_id, lab_id)
@@ -219,6 +220,7 @@ class OrchestratorDatabase:
         self._connection = sqlite3.connect(self.path, check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
         self._connection.executescript(SCHEMA)
+        self._migrate_central_binding_snapshot()
         self._migrate_central_attempt_identity()
         self._backfill_assignment_attempts()
         with self.transaction() as connection:
@@ -231,6 +233,19 @@ class OrchestratorDatabase:
                 (time.time(),),
             )
         self.path.chmod(0o600)
+
+    def _migrate_central_binding_snapshot(self) -> None:
+        columns = {
+            row["name"]
+            for row in self._connection.execute(
+                "pragma table_info(central_executions)"
+            ).fetchall()
+        }
+        if "binding_json" not in columns:
+            self._connection.execute(
+                "alter table central_executions add column binding_json text"
+            )
+            self._connection.commit()
 
     def _migrate_central_attempt_identity(self) -> None:
         row = self._connection.execute(
@@ -380,6 +395,8 @@ class OrchestratorDatabase:
             return None
         value = dict(row)
         value["offer"] = json.loads(value.pop("offer_json"))
+        binding = value.pop("binding_json", None)
+        value["binding"] = json.loads(binding) if binding else None
         return value
 
     def pending_central_executions(self, lab_id: str) -> list[dict[str, Any]]:
@@ -395,8 +412,38 @@ class OrchestratorDatabase:
         for row in rows:
             value = dict(row)
             value["offer"] = json.loads(value.pop("offer_json"))
+            binding = value.pop("binding_json", None)
+            value["binding"] = json.loads(binding) if binding else None
             values.append(value)
         return values
+
+    def freeze_central_binding(
+        self, execution_id: str, binding: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        encoded = json.dumps(dict(binding), sort_keys=True, separators=(",", ":"))
+        if len(encoded.encode("utf-8")) > 64 * 1024:
+            raise ValueError("central private binding snapshot exceeds 64 KiB")
+        with self.transaction() as connection:
+            row = connection.execute(
+                "select binding_json from central_executions where lab_execution_id = ?",
+                (execution_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("central execution disappeared before binding freeze")
+            existing = row["binding_json"]
+            if existing is None:
+                connection.execute(
+                    """
+                    update central_executions
+                    set binding_json = ?, updated_at = ?
+                    where lab_execution_id = ? and binding_json is null
+                    """,
+                    (encoded, time.time(), execution_id),
+                )
+                existing = encoded
+            elif existing != encoded:
+                raise ValueError("central private binding changed after it was frozen")
+        return json.loads(existing)
 
     def update_central_execution(self, execution_id: str, **changes: Any) -> None:
         allowed = {
@@ -574,14 +621,20 @@ class OrchestratorDatabase:
                 ),
             )
 
-    def fail_running_central_attempt(self, execution_id: str, detail: str) -> None:
+    def fail_running_central_attempt(
+        self,
+        execution_id: str,
+        detail: str,
+        *,
+        cleanup_disposition: str = "error",
+    ) -> None:
         completed_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         with self.transaction() as connection:
             connection.execute(
                 """
                 update central_attempts
                 set state = 'error', completed_at = ?, pointer_json = ?,
-                    cleanup_disposition = 'error'
+                    cleanup_disposition = ?
                 where lab_execution_id = ? and completed_at is null
                 """,
                 (
@@ -591,6 +644,7 @@ class OrchestratorDatabase:
                         sort_keys=True,
                         separators=(",", ":"),
                     ),
+                    cleanup_disposition,
                     execution_id,
                 ),
             )

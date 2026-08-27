@@ -6,12 +6,13 @@
 
 - Explicit mode, Status client, sanitized capability/subscription, durable
   offers/claims/outbox, private binding, immutable attempts, v2 runner
-  correlation, completion, restart, and operator controls.
+  correlation, explicit mock/hardware execution, enrollment, completion,
+  restart, and operator controls.
 
 ### Out
 
 - Global definitions/aggregation, detailed runner evidence, device cleanup
-  implementation, real enrollment, and migration/deletion of local definitions.
+  implementation, and migration/deletion of local definitions.
 
 ## Assumptions
 
@@ -34,12 +35,16 @@
 | Claim expires during cleanup | Late/missing global evidence | lease timer and 409 event | finish cleanup, retain evidence, record conflict |
 | Retry overwrites prior attempt | Lost audit/evidence | migration/retry assertions | immutable `assignment_attempts` rows |
 | Internal model leaks to completion | Lab privacy breach | canary serializer tests | explicit public/private DTOs |
+| Mock behavior reaches a real device binding | Unauthorized reset or false evidence | binding-class command/environment tests | explicit binding type and mutually exclusive fields |
+| Hardware process/pointer failure is retried | Duplicate mutation before cleanup is known | launch/failure regression | no automatic hardware retry; require operator inspection |
+| Runner output exhausts local storage | Service/host failure during cleanup | bounded-stream regression and state monitoring | drain continuously, retain at most the configured cap, fail explicitly after cleanup |
 
 ## Security, privacy, and safety
 
-Outbound-only coordination does not broaden hardware authority. Treat agent and
-claim tokens as credentials, keep private mappings local, and preserve existing
-lease, firmware, runner, and cleanup boundaries.
+Outbound-only coordination does not broaden hardware authority. Treat bootstrap,
+agent, and claim tokens as credentials, keep private mappings local, and
+preserve existing lease, runner, and cleanup boundaries. Hardware bindings must
+name the runner devices explicitly and may not inherit arbitrary service state.
 
 ## Performance and resource risks
 
@@ -49,6 +54,8 @@ active execution per local resource.
 
 ## Rollout and rollback
 
-Migrate attempts first, deploy dormant readers/state, then enable simulation.
-Rollback disables the central loop/writer and retains local mode plus historical
-state; never down-convert or delete terminal attempts.
+Deploy explicit binding readers, validate mock integration, then enroll and
+preflight a paused hardware Lab before its first Status trigger. Rollback pauses
+or disables the central loop and retains historical state; never down-convert or
+delete terminal attempts. Physical cleanup is independently verified before a
+new hardware trigger after an uncertain failure.

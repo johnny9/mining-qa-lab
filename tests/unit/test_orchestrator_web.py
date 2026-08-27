@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 import re
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -257,7 +260,7 @@ class OrchestratorApiTest(unittest.IsolatedAsyncioTestCase):
                     "attempt": 1,
                     "relative_path": "runner.log",
                     "size_bytes": archived.stat().st_size,
-                    "sha256": "a" * 64,
+                    "sha256": hashlib.sha256(archived.read_bytes()).hexdigest(),
                     "media_type": "text/plain",
                     "storage_path": str(archived),
                 }
@@ -376,6 +379,101 @@ class OrchestratorApiTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(changed.status_code, 200)
         self.assertNotIn("Paste the local API token", dashboard.text)
         self.assertEqual(blocked.status_code, 403)
+
+    async def test_central_service_runs_one_persistent_agent_and_operator_controls(self) -> None:
+        path = self.root / "central-orchestrator.yaml"
+        document = {
+            "schema_version": 1,
+            "controller": {
+                "state_dir": str(self.root / "central-state"),
+                "auth_mode": "bearer",
+            },
+            "coordination": {
+                "mode": "central",
+                "central": {
+                    "base_url": "http://127.0.0.1:3000",
+                    "lab_id": "lab-east",
+                    "token_env": "MINING_QA_LAB_AGENT_TOKEN",
+                    "subscriptions": {"gates": ["firmware-advisory"]},
+                },
+            },
+            "bindings": {
+                "suite_requirements": {
+                    "gamma-http-and-stratum": {
+                        "execution": "mock",
+                        "profile": str(self.root / "mock-profile.toml"),
+                        "testcode_root": str(self.root / "testcode"),
+                        "mock_base_url_env": "MINING_QA_MOCK_URL",
+                        "platform_class": "gamma-600",
+                        "device_model": "Gamma 602",
+                        "capabilities": ["http", "stratum-v1"],
+                        "resources": ["mock:gamma-602"],
+                        "testcode_commit": "a" * 40,
+                    }
+                }
+            },
+        }
+        path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+        store = ConfigStore(path)
+        database = OrchestratorDatabase(self.root / "central.sqlite3")
+        self.addCleanup(database.close)
+        started = threading.Event()
+        observed_stops: list[threading.Event] = []
+
+        def persistent_agent(_store, _database, *, stop, **_kwargs):
+            observed_stops.append(stop)
+            started.set()
+            stop.wait(2)
+            return 1
+
+        with (
+            mock.patch.dict(
+                "os.environ",
+                {
+                    "MINER_ORCHESTRATOR_API_TOKEN": "central-local-token",
+                    "MINING_QA_LAB_AGENT_TOKEN": "mqa_lab_" + "a" * 43,
+                },
+            ),
+            mock.patch(
+                "mining_qa_lab.central.run_central_forever",
+                side_effect=persistent_agent,
+            ) as run_agent,
+        ):
+            app = create_app(store, database)
+            lifespan = app.router.lifespan_context(app)
+            await asyncio.wait_for(lifespan.__aenter__(), timeout=2)
+            try:
+                for _ in range(100):
+                    if started.is_set():
+                        break
+                    await asyncio.sleep(0.01)
+                self.assertTrue(started.is_set())
+                async with AsyncClient(
+                    transport=ASGITransport(app=app),
+                    base_url="http://orchestrator.test",
+                ) as client:
+                    dashboard = await client.get("/")
+                    paused = await client.post(
+                        "/api/v1/central/pause",
+                        headers={"Authorization": "Bearer central-local-token"},
+                    )
+                    resumed = await client.post(
+                        "/api/v1/central/resume",
+                        headers={"Authorization": "Bearer central-local-token"},
+                    )
+            finally:
+                await asyncio.wait_for(
+                    lifespan.__aexit__(None, None, None), timeout=3
+                )
+
+            run_agent.assert_called_once()
+            self.assertTrue(observed_stops[0].is_set())
+            self.assertEqual(paused.status_code, 200)
+            self.assertTrue(paused.json()["paused"])
+            self.assertEqual(resumed.status_code, 200)
+            self.assertFalse(resumed.json()["paused"])
+            self.assertIn("Central coordination agent", dashboard.text)
+            self.assertIn("Manual trigger ownership is centralized", dashboard.text)
 
 
 if __name__ == "__main__":

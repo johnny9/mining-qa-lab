@@ -119,12 +119,24 @@ def inspect_health(url: str, timeout: float) -> dict[str, Any]:
     for name, count in (("queued_assignments", queued), ("running_assignments", running)):
         if isinstance(count, bool) or not isinstance(count, int) or count < 0:
             raise InspectionError(f"health response has invalid {name}")
-    return {
+    result = {
         "status": "ok",
         "config_revision": revision,
         "queued_assignments": queued,
         "running_assignments": running,
     }
+    central = value.get("central")
+    if central is not None:
+        if not isinstance(central, dict) or not isinstance(central.get("paused"), bool):
+            raise InspectionError("health response has invalid central agent state")
+        central_result = {"paused": central["paused"]}
+        for name in ("active_leases", "pending_executions", "pending_outbox"):
+            count = central.get(name)
+            if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+                raise InspectionError(f"health response has invalid central.{name}")
+            central_result[name] = count
+        result["central"] = central_result
+    return result
 
 
 def inspect(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
@@ -154,7 +166,16 @@ def inspect(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
 
     service_active = service.get("LoadState") == "loaded" and service.get("ActiveState") == "active"
     running = health.get("running_assignments")
-    safe_to_restart = service_active and health.get("status") == "ok" and running == 0
+    central = health.get("central")
+    central_idle = central is None or (
+        central.get("paused") is True and central.get("active_leases") == 0
+    )
+    safe_to_restart = (
+        service_active
+        and health.get("status") == "ok"
+        and running == 0
+        and central_idle
+    )
     report["safe_to_restart"] = safe_to_restart
     if not service_active:
         issues.append("service is not loaded and active")

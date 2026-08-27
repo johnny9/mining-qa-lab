@@ -5,7 +5,7 @@ configuration, gates, trusted triggers, lab inspection, and durable history.
 
 - **Lifecycle:** supported
 - **Owner:** lab-orchestrator maintainers
-- **Last reconciled:** 2026-08-10
+- **Last reconciled:** 2026-08-24
 - **Spec ID:** ORCH-API
 
 [Intent](intent.md) · [Acceptance](acceptance.md) · [Design](design.md) ·
@@ -13,6 +13,9 @@ configuration, gates, trusted triggers, lab inspection, and durable history.
 
 ## Changelog
 
+- 2026-08-24: Added central-agent status/pause/trigger guidance, made blocking
+  API work portable across supported Python runtimes, and re-verifies archived
+  content before authenticated download.
 - 2026-08-10: Added a confirmed overview action for retrying only failed,
   errored, or cancelled gate runs through the authenticated retry API.
 - 2026-08-10: Added project/branch-or-commit/device-type manual gate controls

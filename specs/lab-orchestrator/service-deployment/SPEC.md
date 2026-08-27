@@ -5,7 +5,7 @@ hardened systemd user service without losing configuration or durable state.
 
 - **Lifecycle:** supported
 - **Owner:** lab-orchestrator maintainers
-- **Last reconciled:** 2026-08-10
+- **Last reconciled:** 2026-08-24
 - **Spec ID:** ORCH-SERVICE
 
 [Intent](intent.md) · [Acceptance](acceptance.md) · [Design](design.md) ·
@@ -13,6 +13,8 @@ hardened systemd user service without losing configuration or durable state.
 
 ## Changelog
 
+- 2026-08-24: Extended idle inspection and update guidance to require a paused
+  central agent with zero active private resource leases.
 - 2026-08-10: Split first-install and exact-SHA update agent workflows into
   focused skills while retaining the general inspection and recovery skill.
 - 2026-08-10: Moved repository and service-release examples to

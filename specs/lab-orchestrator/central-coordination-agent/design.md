@@ -20,14 +20,18 @@
   central configuration without network mutation.
 - Pausing new central claims is an authenticated operator action and does not
   stop active cleanup.
+- `central-register --public-label LABEL --agent-environment-file PATH` performs
+  one bootstrap-authenticated enrollment and creates a new private environment
+  file containing the returned Lab agent token. It never prints the token and
+  refuses to overwrite an existing file.
 
 ### Configuration
 
-Implemented proof-of-concept schema:
+Central production binding schema:
 
 ```yaml
 coordination:
-  mode: local
+  mode: central
   central:
     base_url: https://status.example
     lab_id: lab-east
@@ -36,26 +40,34 @@ coordination:
     poll_seconds: 10
     request_timeout_seconds: 10
     retry_backoff_seconds: 2
-    max_backoff_seconds: 60
+    max_retry_backoff_seconds: 60
     max_attempts: 3
     subscriptions:
       gates: [firmware-advisory]
 bindings:
   suite_requirements:
     gamma-http-and-stratum:
+      execution: hardware
       profile: /private/profiles/gamma-read-write.toml
       testcode_root: /private/checkouts/mining-qa-testcode
       testcode_commit: 0123456789abcdef0123456789abcdef01234567
+      runner_executable: /private/venvs/mining-qa-testcode/bin/miner-test
+      runner_devices: [gamma-02]
+      timeout_seconds: 3600
       platform_class: gamma
       device_model: gamma-602
       capabilities: [http, stratum-v1]
-      resources: [mock-gamma-east]
-      mock_base_url_env: MINING_QA_MOCK_URL
+      resources: [device:gamma-02]
 ```
 
 `mode` is `local` or `central` and defaults to `local`. Central mode requires
 HTTPS except loopback integration, named token environment, positive bounded
-timeouts, and at least one subscription/binding for work to be accepted.
+timeouts, and at least one subscription/binding for work to be accepted. Every
+binding requires `execution: mock | hardware`. A mock binding replaces the
+hardware-only executable/devices with `mock_base_url_env` and is accepted only
+when that environment and the central Status service both resolve to loopback.
+Hardware bindings never receive mock reset behavior or integration-only
+environment variables.
 
 ### Environment
 
@@ -63,6 +75,9 @@ timeouts, and at least one subscription/binding for work to be accepted.
   never enter YAML, subprocess arguments, general logs, metadata, completion,
   or public records. Private SQLite state may retain only the minimum protected
   capability required for restart-safe renewal/completion.
+- Runner processes receive the controller environment allowlist plus explicit
+  orchestration/publisher variables. Lab agent/bootstrap credentials are not
+  runner-eligible defaults.
 
 ### Python API
 
@@ -103,6 +118,8 @@ timeouts, and at least one subscription/binding for work to be accepted.
 - Freeze private binding and source/definition snapshots before local lease or
   runner construction.
 - Acquire every local resource before Testcode installation/deployment/run.
+- Revalidate the exact clean Testcode checkout, executable, profile, and private
+  device selectors after lease acquisition and before runner launch.
 - Persist terminal attempt and cleanup disposition before resource release and
   completion enqueue.
 - Every v2 pointer correlation field must equal its immutable attempt input.
@@ -118,6 +135,8 @@ timeouts, and at least one subscription/binding for work to be accepted.
   solely to repair central state.
 - Do not let central mode reinterpret, upload, or delete existing local
   definitions.
+- Do not automatically retry a hardware binding after process launch or infer
+  physical cleanup from process exit, lease release, or a central claim state.
 
 ## Data and state
 
@@ -134,8 +153,9 @@ conflict`, retaining the idempotency key and bounded response code.
    central execution plus returned cursor, and decline safely before claim when
    no portable/local policy match exists.
 3. Claim, freeze binding, create local run/matrix, and acquire resources.
-4. Emit exact v2 metadata, execute Testcode, validate pointer, persist attempt
-   and cleanup, then release resources.
+4. Emit exact v2 metadata and portable pattern with private device selectors,
+   execute Testcode through the selected binding class, validate the pointer,
+   persist attempt and cleanup disposition, then release resources.
 5. Build allowlisted completion, enqueue it transactionally, and retry safely
    until delivered or a permanent/late conflict is recorded.
 
@@ -145,16 +165,20 @@ conflict`, retaining the idempotency key and bounded response code.
   a bounded decline code.
 - Restart reopens cursor/execution/claim/outbox; interrupted runner work remains
   fail-closed under existing recovery and never silently resumes.
+- Missing/malformed pointer or process failure after a hardware launch produces
+  one terminal local attempt and a sanitized error completion when the claim is
+  still usable. Automatic retries remain available only to deterministic mock
+  integration bindings.
 - Central outage uses bounded exponential backoff and a bounded durable outbox.
 - Claim expiry during active work allows cleanup to finish; completion conflict
   remains visible and local evidence stays immutable.
 
 ## Compatibility and migration
 
-First normalize existing assignment data into immutable attempt 1 without
-changing outcome semantics. Ship v2 readers before writers. Keep central mode
-disabled by default and local mode unchanged. Rollback disables the central
-loop/writer while preserving additive state and historical evidence.
+Ship the explicit binding reader before any real configuration. Existing
+proof-of-concept bindings are updated to declare `execution: mock`; ambiguity
+fails validation. Local mode remains unchanged. Rollback pauses/disables the
+central loop while preserving additive state and historical evidence.
 
 ## Resource and operational constraints
 
@@ -175,6 +199,8 @@ subprocess, and hardware operations outside write transactions.
 ## Verification approach
 
 Unit-test schema, DTO limits, allowlists, transitions, unique/replay behavior,
-SQLite reopen, outbox, expiry, immutable attempts, binding rejection, exact v2
-environment/pointer equality, and local-mode compatibility. Then run the
-Status-owned full local matrix with two processes and mock devices.
+SQLite reopen, outbox, expiry, immutable attempts, binding rejection, mock/real
+command and environment separation, output bounds, terminal hardware failure,
+exact v2 environment/pointer equality, and local-mode compatibility. Then run
+the Status-owned full local matrix with two processes and mock devices. A real
+Lab requires a separate authorized preflight/HIL and cleanup observation.

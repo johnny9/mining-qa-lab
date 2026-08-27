@@ -112,9 +112,13 @@ coordination:
 bindings:
   suite_requirements:
     gamma-http-and-stratum:
+      execution: hardware
       profile: /private/profiles/gamma-read-write.toml
       testcode_root: /private/checkouts/mining-qa-testcode
       testcode_commit: 0123456789abcdef0123456789abcdef01234567
+      runner_executable: /private/venvs/mining-qa-testcode/bin/miner-test
+      runner_devices: [gamma-02]
+      timeout_seconds: 3600
       platform_class: gamma
       device_model: gamma-602
       capabilities: [http, stratum-v1]
