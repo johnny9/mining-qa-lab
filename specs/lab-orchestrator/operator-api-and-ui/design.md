@@ -57,6 +57,10 @@
 - Manual gates validate the project/gate relationship and selected device types.
   A blank source resolves configured `main`, then `master`, to an exact SHA at
   submission; explicit commits remain exact identities.
+- Local module selection accepts only a non-empty subset of the selected gate's
+  configured Testcode module IDs and stores it in the manual event before
+  planning. The PR list shows all matching open PRs; contributor trust remains
+  internal policy metadata rather than presentation language.
 - Artifact APIs serve only persisted archive records whose resolved paths remain
   below `state_dir/archive`; inline viewing is UTF-8 and limited to 1 MiB.
 - Retry eligibility is derived on the server-rendered history view. The UI offers

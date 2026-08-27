@@ -18,6 +18,19 @@
 - [x] **ORCH-API-AC-11:** Overview offers a confirmed retry only for failed,
   errored, or cancelled runs and invokes the authenticated retry API, which
   requeues incomplete assignments without rerunning passed assignments.
+- [x] **ORCH-API-AC-12:** Hybrid pages expose local gate editing/runs and
+  separate Status-owned shared definitions. A locally authenticated shared run
+  is forwarded with the bound Lab token and can target only that Lab.
+- [x] **ORCH-API-AC-13:** The Run page lists every matching bounded open PR
+  regardless of contributor trust classification, retains exact-head
+  confirmation, and lets the operator select a non-empty subset of the gate's
+  configured Testcode modules for local or shared execution.
+- [x] **ORCH-API-AC-14:** Open PR presentation shows at most ten cards per page,
+  reports the visible range and page count, and keeps exact SHA, contributor,
+  branches, confirmation, and run action visible in a compact layout.
+- [x] **ORCH-API-AC-15:** Contributor filtering applies to the complete loaded
+  PR set before pagination, resets to page one, and reports matching versus
+  total counts without changing exact-SHA approval.
 
 ## Interfaces and compatibility
 

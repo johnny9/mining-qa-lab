@@ -147,6 +147,11 @@ class OrchestratorApiTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn('data-kind="device"', lab.text)
         self.assertIn('class="manual-run-form"', trigger.text)
         self.assertIn("'manual_device_types'", trigger.text)
+        self.assertIn("'manual_test_modules'", trigger.text)
+        self.assertIn("'shared_test_modules'", trigger.text)
+        self.assertIn("PR_PAGE_SIZE=10", trigger.text)
+        self.assertIn("pr-pagination", trigger.text)
+        self.assertIn("pr_contributor_filter", trigger.text)
         self.assertIn('data-action="approve-pr"', trigger.text)
 
     async def test_overview_retries_failed_gate_through_authenticated_api(self) -> None:
@@ -232,6 +237,7 @@ class OrchestratorApiTest(unittest.IsolatedAsyncioTestCase):
                 "commit_sha": None,
                 "branch": None,
                 "device_types": ["bitaxe_602"],
+                "test_modules": ["smoke"],
             },
         )
 
@@ -242,8 +248,10 @@ class OrchestratorApiTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(github.repository, "owner/firmware")
         assignments = self.database.assignments(run["id"])
         self.assertEqual({item["setup_id"] for item in assignments}, {"gamma-bench"})
+        self.assertEqual({item["module_id"] for item in assignments}, {"smoke"})
         event = self.database.list_events()[0]
         self.assertEqual(event["payload"]["device_types"], ["bitaxe_602"])
+        self.assertEqual(event["payload"]["test_modules"], ["smoke"])
         self.assertEqual(event["payload"]["source_resolution"], "latest_project_branch")
 
     async def test_local_artifact_archive_requires_auth_and_supports_view_download(self) -> None:
